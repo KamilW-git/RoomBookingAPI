@@ -1,0 +1,10 @@
+# Zależności
+node_modules/
+
+# Prawdziwe sekrety i konfiguracja lokalna: nigdy do repozytorium (wzór: .env.example)
+.env
+.env.*
+!.env.example
+
+# Logi
+*.log

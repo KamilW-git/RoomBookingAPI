@@ -1,0 +1,40 @@
+{
+  "name": "lab1-rooms-api",
+  "version": "1.0.0",
+  "description": "Room Booking API - architektura warstwowa, dane w pamięci (repository), bez bazy",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:psql": "docker compose exec db psql -U roombooking -d roombooking",
+    "seed:run": "knex seed:run",
+    "race:run": "node scripts/double-booking.js",
+    "screenshots:zad04-1": "node scripts/screenshots/zadanie04-1.js",
+    "screenshots:zad04-2": "node scripts/screenshots/zadanie04-2.js",
+    "screenshots:zad04-3": "node scripts/screenshots/zadanie04-3.js",
+    "screenshots:zad04-4": "node scripts/screenshots/zadanie04-4.js",
+    "screenshots:zad04-5": "node scripts/screenshots/zadanie04-5.js",
+    "docs:check": "node scripts/docs-check.js",
+    "permissions:matrix": "node scripts/permissions-matrix.js",
+    "demo:migration-user-id": "node scripts/migration-user-id-demo.js",
+    "migrate:latest": "knex migrate:latest",
+    "migrate:down": "knex migrate:down",
+    "migrate:rollback": "knex migrate:rollback --all",
+    "migrate:status": "knex migrate:list"
+  },
+  "dependencies": {
+    "bcryptjs": "2.4.3",
+    "dotenv": "16.4.7",
+    "express": "5.1.0",
+    "jsonwebtoken": "9.0.2",
+    "knex": "3.1.0",
+    "pg": "8.13.1",
+    "swagger-ui-express": "^5.0.1",
+    "yaml": "^2.5.1",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "playwright-core": "1.49.1"
+  }
+}

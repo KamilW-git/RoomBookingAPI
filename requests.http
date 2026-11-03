@@ -1,0 +1,393 @@
+# ===== UWAGA (zestaw 04): prawie wszystkie endpointy wymagają tokenu JWT =====
+# Najpierw wyślij żądanie "loginUser" (Send Request). Pozostałe żądania używają zmiennej {{token}}.
+# Hasło kont USER z seeda to wartość SEED_USER_PASSWORD z pliku .env (wpisz ją poniżej).
+
+### Logowanie konta USER z seeda (token dla pozostałych żądań)
+# @name loginUser
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{ "email": "jan.kowalski@seed.example.com", "password": "wpisz-tutaj-SEED_USER_PASSWORD-z-pliku-.env" }
+
+###
+
+@token = {{loginUser.response.body.$.accessToken}}
+
+### Wszystkie sale
+GET http://localhost:3000/api/rooms
+Authorization: Bearer {{token}}
+
+###
+
+### Pojedyncza sala (istniejące ID)
+GET http://localhost:3000/api/rooms/1
+Authorization: Bearer {{token}}
+
+###
+
+### Nieistniejąca sala -> 404
+GET http://localhost:3000/api/rooms/99
+Authorization: Bearer {{token}}
+
+###
+
+### Nowa rezerwacja (UTC)
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "roomId": 1,
+  "participants": 20,
+  "startTime": "2026-11-10T10:00:00.000Z",
+  "endTime": "2026-11-10T12:00:00.000Z"
+}
+
+###
+
+### Nowa rezerwacja ze strefą +01:00 (w odpowiedzi będzie UTC)
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "roomId": 2,
+  "participants": 10,
+  "startTime": "2026-11-10T11:00:00+01:00",
+  "endTime": "2026-11-10T13:00:00+01:00"
+}
+
+###
+
+### Przekroczona pojemność -> 409
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "roomId": 1,
+  "participants": 40,
+  "startTime": "2026-11-10T10:00:00.000Z",
+  "endTime": "2026-11-10T12:00:00.000Z"
+}
+
+###
+
+### Wszystkie rezerwacje
+GET http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+
+###
+
+### Rezerwacje sali 1
+GET http://localhost:3000/api/reservations?roomId=1
+Authorization: Bearer {{token}}
+
+###
+
+### Anulowanie przyszłej rezerwacji -> 200, status CANCELLED, ustawione cancelledAt
+### (id = 2: pierwsza rezerwacja utworzona powyżej; id = 1 to rezerwacja startowa z seed)
+PATCH http://localhost:3000/api/reservations/2/cancel
+Authorization: Bearer {{token}}
+
+###
+
+### Ponowne anulowanie -> 200, ta sama rezerwacja, cancelledAt bez zmian (idempotentne)
+PATCH http://localhost:3000/api/reservations/2/cancel
+Authorization: Bearer {{token}}
+
+###
+
+### Anulowanie rozpoczętej rezerwacji (seed, id = 1) -> 409 RESERVATION_ALREADY_STARTED
+PATCH http://localhost:3000/api/reservations/1/cancel
+Authorization: Bearer {{token}}
+
+###
+
+### Wiele błędów naraz (w tym nieznane pole status) -> 400 z kompletem błędów
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "roomId": 1,
+  "participants": 0,
+  "startTime": "2026-11-10T12:00:00Z",
+  "endTime": "2026-11-10T10:00:00Z",
+  "status": "CANCELLED"
+}
+
+###
+
+### Zły format ID -> 400 (a nie 404)
+GET http://localhost:3000/api/rooms/abc
+Authorization: Bearer {{token}}
+
+###
+
+### Nieistniejąca ścieżka -> 404 w JSON
+GET http://localhost:3000/api/nope
+
+###
+
+### Niepoprawny JSON -> 400 INVALID_JSON
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"roomId": 1,
+
+###
+
+### TYMCZASOWE: nieoczekiwany błąd -> 500 (własny X-Request-Id widoczny w logach serwera)
+GET http://localhost:3000/api/debug/crash
+Authorization: Bearer {{token}}
+X-Request-Id: demo-crash-0001
+
+
+###
+
+# ===== Zadanie 03 / cz. 2: budynki i sale (PostgreSQL) =====
+
+### Wszystkie budynki
+GET http://localhost:3000/api/buildings
+Authorization: Bearer {{token}}
+
+###
+
+### Pojedynczy budynek
+GET http://localhost:3000/api/buildings/1
+Authorization: Bearer {{token}}
+
+###
+
+### Nowy budynek -> 201 + Location
+POST http://localhost:3000/api/buildings
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "name": "Budynek C", "address": "ul. Długa 1, Kraków" }
+
+###
+
+### Ten sam budynek drugi raz -> 409 RESOURCE_ALREADY_EXISTS (bez szczegółów bazy)
+POST http://localhost:3000/api/buildings
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "name": "Budynek C", "address": "ul. Długa 1, Kraków" }
+
+###
+
+### Nowa sala w budynku 1 -> 201 + Location
+POST http://localhost:3000/api/rooms
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "buildingId": 1, "name": "201", "capacity": 25 }
+
+###
+
+### Nieistniejący budynek -> 404
+POST http://localhost:3000/api/rooms
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "buildingId": 999, "name": "201", "capacity": 25 }
+
+###
+
+### Duplikat nazwy sali w budynku 1 -> 409 RESOURCE_ALREADY_EXISTS
+POST http://localhost:3000/api/rooms
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "buildingId": 1, "name": "101", "capacity": 10 }
+
+###
+
+# ===== Zadanie 03 / cz. 3: relacje i JOIN =====
+
+### Sala z budynkiem
+GET http://localhost:3000/api/rooms/3
+Authorization: Bearer {{token}}
+
+###
+
+### Sale budynku 1
+GET http://localhost:3000/api/buildings/1/rooms
+Authorization: Bearer {{token}}
+
+###
+
+### Nieistniejący budynek -> 404
+GET http://localhost:3000/api/buildings/999/rooms
+Authorization: Bearer {{token}}
+
+###
+
+### Budynki z liczbą sal (roomsCount)
+GET http://localhost:3000/api/buildings
+Authorization: Bearer {{token}}
+
+###
+
+### Rezerwacja z osadzoną salą i budynkiem
+GET http://localhost:3000/api/reservations/2
+Authorization: Bearer {{token}}
+
+###
+
+### Lista rezerwacji w tym samym formacie
+GET http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+
+###
+
+# ===== Zadanie 03 / cz. 4: paginacja, filtrowanie i sortowanie =====
+# Dane demonstracyjne (37 rezerwacji): node scripts/add-demo-reservations.js
+
+### Domyślnie: page=1, limit=20, sort=startTime
+GET http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+
+###
+
+### Druga strona po 10, od najpóźniejszej
+GET http://localhost:3000/api/reservations?page=2&limit=10&sort=-startTime
+Authorization: Bearer {{token}}
+
+###
+
+### Tylko anulowane, od najnowszych
+GET http://localhost:3000/api/reservations?status=CANCELLED&sort=-createdAt&limit=5
+Authorization: Bearer {{token}}
+
+###
+
+### Rezerwacje sal z budynku 2, od największej liczby uczestników
+GET http://localhost:3000/api/reservations?buildingId=2&sort=-participants&limit=5
+Authorization: Bearer {{token}}
+
+###
+
+### Nakładanie na przedział 11:00-11:30 (rezerwacja 10:00-12:00 jest widoczna)
+GET http://localhost:3000/api/reservations?roomId=3&from=2026-11-10T11:00:00Z&to=2026-11-10T11:30:00Z
+Authorization: Bearer {{token}}
+
+###
+
+### Kombinacja wszystkich filtrów
+GET http://localhost:3000/api/reservations?roomId=3&status=CONFIRMED&from=2026-11-01T00:00:00Z&to=2026-11-30T23:59:59Z&page=1&limit=5&sort=-startTime
+Authorization: Bearer {{token}}
+
+###
+
+### Strona poza zakresem -> 200 i pusta tablica data
+GET http://localhost:3000/api/reservations?page=99
+Authorization: Bearer {{token}}
+
+###
+
+### Niepoprawne sortowanie -> 400
+GET http://localhost:3000/api/reservations?sort=reservedBy
+Authorization: Bearer {{token}}
+
+###
+
+### from >= to -> 400
+GET http://localhost:3000/api/reservations?from=2026-11-10T12:00:00Z&to=2026-11-10T10:00:00Z
+Authorization: Bearer {{token}}
+
+###
+
+### limit poza zakresem -> 400
+GET http://localhost:3000/api/reservations?limit=101
+Authorization: Bearer {{token}}
+
+###
+
+# ===== Zestaw 04 / zadanie 1: rejestracja =====
+
+### Rejestracja (e-mail zostanie znormalizowany do małych liter) -> 201
+POST http://localhost:3000/api/auth/register
+Content-Type: application/json
+
+{ "email": "Jan.Kowalski@example.com", "password": "bardzo-dlugie-haslo" }
+
+###
+
+### Duplikat adresu różniący się wielkością liter -> 409 EMAIL_TAKEN
+POST http://localhost:3000/api/auth/register
+Content-Type: application/json
+
+{ "email": "JAN.KOWALSKI@EXAMPLE.COM", "password": "inne-dlugie-haslo-1" }
+
+###
+
+### Próba nadania roli ADMIN -> 400 (Unknown field: role)
+POST http://localhost:3000/api/auth/register
+Content-Type: application/json
+
+{ "email": "hacker@example.com", "password": "bardzo-dlugie-haslo", "role": "ADMIN" }
+
+###
+
+### Zbyt krótkie hasło (9 znaków) -> 400
+POST http://localhost:3000/api/auth/register
+Content-Type: application/json
+
+{ "email": "krotkie@example.com", "password": "123456789" }
+
+###
+
+### Zły format e-maila -> 400
+POST http://localhost:3000/api/auth/register
+Content-Type: application/json
+
+{ "email": "to-nie-email", "password": "bardzo-dlugie-haslo" }
+
+###
+
+# ===== Zestaw 04 / zadanie 2: logowanie i JWT =====
+# Hasło administratora: wartość SEED_ADMIN_PASSWORD z pliku .env (wpisz poniżej zamiast "haslo-administratora")
+
+### Logowanie administratora -> 200 { accessToken, tokenType, expiresIn }
+# @name loginAdmin
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{ "email": "admin@example.com", "password": "haslo-administratora" }
+
+###
+
+### Dane zalogowanego użytkownika (token z poprzedniego żądania) -> 200
+GET http://localhost:3000/api/auth/me
+Authorization: Bearer {{loginAdmin.response.body.$.accessToken}}
+
+###
+
+### Zły e-mail -> 401 INVALID_CREDENTIALS (taka sama odpowiedź jak dla złego hasła)
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{ "email": "nie-ma-takiego@example.com", "password": "jakies-haslo-123" }
+
+###
+
+### Złe hasło -> 401 INVALID_CREDENTIALS (taka sama odpowiedź jak dla złego e-maila)
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{ "email": "admin@example.com", "password": "zle-haslo-123456" }
+
+###
+
+### /me bez tokenu -> 401 AUTH_REQUIRED
+GET http://localhost:3000/api/auth/me
+
+###
+
+### /me ze złym formatem nagłówka -> 401 INVALID_AUTH_HEADER
+GET http://localhost:3000/api/auth/me
+Authorization: Basic YWRtaW46YWRtaW4=

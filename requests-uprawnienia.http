@@ -1,0 +1,463 @@
+# ===== Zestaw 04 / zadanie 4: uprawnienia (role i ownership) =====
+# Tabela: endpoint x (brak tokenu / USER właściciel / USER obcy / ADMIN) -> kod odpowiedzi.
+#   USER właściciel = Jan Kowalski (jan.kowalski@seed.example.com), właściciel rezerwacji nr 2
+#   USER obcy       = Anna Nowak   (anna.nowak@seed.example.com), NIE jest właścicielką rezerwacji nr 2
+#   ADMIN           = admin@example.com
+#
+# PRZED URUCHOMIENIEM: npm run seed:run (czyste dane) oraz wpisz hasła w trzech żądaniach logowania poniżej:
+#   konta USER: wartość SEED_USER_PASSWORD z pliku .env, konto ADMIN: wartość SEED_ADMIN_PASSWORD.
+# Najpierw wyślij trzy logowania (Send Request), potem pozostałe żądania po kolei, od góry do dołu.
+# W tytule każdego żądania jest oczekiwany kod odpowiedzi. Po przejściu całego pliku zresetuj dane: npm run seed:run
+
+### Logowanie: USER właściciel (Jan)
+# @name loginOwner
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{ "email": "jan.kowalski@seed.example.com", "password": "wpisz-tutaj-SEED_USER_PASSWORD" }
+
+###
+
+### Logowanie: USER obcy (Anna)
+# @name loginOther
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{ "email": "anna.nowak@seed.example.com", "password": "wpisz-tutaj-SEED_USER_PASSWORD" }
+
+###
+
+### Logowanie: ADMIN
+# @name loginAdmin
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{ "email": "admin@example.com", "password": "wpisz-tutaj-SEED_ADMIN_PASSWORD" }
+
+###
+
+@owner = {{loginOwner.response.body.$.accessToken}}
+@other = {{loginOther.response.body.$.accessToken}}
+@admin = {{loginAdmin.response.body.$.accessToken}}
+
+# ----- GET /api/buildings -----
+
+### GET /api/buildings - brak tokenu -> 401
+GET http://localhost:3000/api/buildings
+
+###
+
+### GET /api/buildings - USER właściciel (Jan) -> 200
+GET http://localhost:3000/api/buildings
+Authorization: Bearer {{owner}}
+
+###
+
+### GET /api/buildings - USER obcy (Anna) -> 200
+GET http://localhost:3000/api/buildings
+Authorization: Bearer {{other}}
+
+###
+
+### GET /api/buildings - ADMIN -> 200
+GET http://localhost:3000/api/buildings
+Authorization: Bearer {{admin}}
+
+###
+
+# ----- GET /api/buildings/1 -----
+
+### GET /api/buildings/1 - brak tokenu -> 401
+GET http://localhost:3000/api/buildings/1
+
+###
+
+### GET /api/buildings/1 - USER właściciel (Jan) -> 200
+GET http://localhost:3000/api/buildings/1
+Authorization: Bearer {{owner}}
+
+###
+
+### GET /api/buildings/1 - USER obcy (Anna) -> 200
+GET http://localhost:3000/api/buildings/1
+Authorization: Bearer {{other}}
+
+###
+
+### GET /api/buildings/1 - ADMIN -> 200
+GET http://localhost:3000/api/buildings/1
+Authorization: Bearer {{admin}}
+
+###
+
+# ----- GET /api/buildings/1/rooms -----
+
+### GET /api/buildings/1/rooms - brak tokenu -> 401
+GET http://localhost:3000/api/buildings/1/rooms
+
+###
+
+### GET /api/buildings/1/rooms - USER właściciel (Jan) -> 200
+GET http://localhost:3000/api/buildings/1/rooms
+Authorization: Bearer {{owner}}
+
+###
+
+### GET /api/buildings/1/rooms - USER obcy (Anna) -> 200
+GET http://localhost:3000/api/buildings/1/rooms
+Authorization: Bearer {{other}}
+
+###
+
+### GET /api/buildings/1/rooms - ADMIN -> 200
+GET http://localhost:3000/api/buildings/1/rooms
+Authorization: Bearer {{admin}}
+
+###
+
+# ----- POST /api/buildings (zapis: tylko ADMIN) -----
+
+### POST /api/buildings - brak tokenu -> 401
+POST http://localhost:3000/api/buildings
+Content-Type: application/json
+
+{"name":"Budynek testowy 1","address":"ul. Testowa 1"}
+
+###
+
+### POST /api/buildings - USER właściciel (Jan) -> 403
+POST http://localhost:3000/api/buildings
+Authorization: Bearer {{owner}}
+Content-Type: application/json
+
+{"name":"Budynek testowy 2","address":"ul. Testowa 1"}
+
+###
+
+### POST /api/buildings - USER obcy (Anna) -> 403
+POST http://localhost:3000/api/buildings
+Authorization: Bearer {{other}}
+Content-Type: application/json
+
+{"name":"Budynek testowy 3","address":"ul. Testowa 1"}
+
+###
+
+### POST /api/buildings - ADMIN -> 201
+POST http://localhost:3000/api/buildings
+Authorization: Bearer {{admin}}
+Content-Type: application/json
+
+{"name":"Budynek testowy 4","address":"ul. Testowa 1"}
+
+###
+
+# ----- GET /api/rooms -----
+
+### GET /api/rooms - brak tokenu -> 401
+GET http://localhost:3000/api/rooms
+
+###
+
+### GET /api/rooms - USER właściciel (Jan) -> 200
+GET http://localhost:3000/api/rooms
+Authorization: Bearer {{owner}}
+
+###
+
+### GET /api/rooms - USER obcy (Anna) -> 200
+GET http://localhost:3000/api/rooms
+Authorization: Bearer {{other}}
+
+###
+
+### GET /api/rooms - ADMIN -> 200
+GET http://localhost:3000/api/rooms
+Authorization: Bearer {{admin}}
+
+###
+
+# ----- GET /api/rooms/3 -----
+
+### GET /api/rooms/3 - brak tokenu -> 401
+GET http://localhost:3000/api/rooms/3
+
+###
+
+### GET /api/rooms/3 - USER właściciel (Jan) -> 200
+GET http://localhost:3000/api/rooms/3
+Authorization: Bearer {{owner}}
+
+###
+
+### GET /api/rooms/3 - USER obcy (Anna) -> 200
+GET http://localhost:3000/api/rooms/3
+Authorization: Bearer {{other}}
+
+###
+
+### GET /api/rooms/3 - ADMIN -> 200
+GET http://localhost:3000/api/rooms/3
+Authorization: Bearer {{admin}}
+
+###
+
+# ----- POST /api/rooms (zapis: tylko ADMIN) -----
+
+### POST /api/rooms - brak tokenu -> 401
+POST http://localhost:3000/api/rooms
+Content-Type: application/json
+
+{"buildingId":1,"name":"T1","capacity":10}
+
+###
+
+### POST /api/rooms - USER właściciel (Jan) -> 403
+POST http://localhost:3000/api/rooms
+Authorization: Bearer {{owner}}
+Content-Type: application/json
+
+{"buildingId":1,"name":"T2","capacity":10}
+
+###
+
+### POST /api/rooms - USER obcy (Anna) -> 403
+POST http://localhost:3000/api/rooms
+Authorization: Bearer {{other}}
+Content-Type: application/json
+
+{"buildingId":1,"name":"T3","capacity":10}
+
+###
+
+### POST /api/rooms - ADMIN -> 201
+POST http://localhost:3000/api/rooms
+Authorization: Bearer {{admin}}
+Content-Type: application/json
+
+{"buildingId":1,"name":"T4","capacity":10}
+
+###
+
+# ----- PATCH /api/buildings/1 (brak endpointu; reguła ról działa dla całego prefiksu) -----
+
+### PATCH /api/buildings/1 - brak tokenu -> 401
+PATCH http://localhost:3000/api/buildings/1
+Content-Type: application/json
+
+{"name":"x"}
+
+###
+
+### PATCH /api/buildings/1 - USER właściciel (Jan) -> 403
+PATCH http://localhost:3000/api/buildings/1
+Authorization: Bearer {{owner}}
+Content-Type: application/json
+
+{"name":"x"}
+
+###
+
+### PATCH /api/buildings/1 - USER obcy (Anna) -> 403
+PATCH http://localhost:3000/api/buildings/1
+Authorization: Bearer {{other}}
+Content-Type: application/json
+
+{"name":"x"}
+
+###
+
+### PATCH /api/buildings/1 - ADMIN -> 404
+PATCH http://localhost:3000/api/buildings/1
+Authorization: Bearer {{admin}}
+Content-Type: application/json
+
+{"name":"x"}
+
+###
+
+# ----- DELETE /api/rooms/1 (brak endpointu; reguła ról działa dla całego prefiksu) -----
+
+### DELETE /api/rooms/1 - brak tokenu -> 401
+DELETE http://localhost:3000/api/rooms/1
+
+###
+
+### DELETE /api/rooms/1 - USER właściciel (Jan) -> 403
+DELETE http://localhost:3000/api/rooms/1
+Authorization: Bearer {{owner}}
+
+###
+
+### DELETE /api/rooms/1 - USER obcy (Anna) -> 403
+DELETE http://localhost:3000/api/rooms/1
+Authorization: Bearer {{other}}
+
+###
+
+### DELETE /api/rooms/1 - ADMIN -> 404
+DELETE http://localhost:3000/api/rooms/1
+Authorization: Bearer {{admin}}
+
+###
+
+# ----- GET /api/auth/me -----
+
+### GET /api/auth/me - brak tokenu -> 401
+GET http://localhost:3000/api/auth/me
+
+###
+
+### GET /api/auth/me - USER właściciel (Jan) -> 200
+GET http://localhost:3000/api/auth/me
+Authorization: Bearer {{owner}}
+
+###
+
+### GET /api/auth/me - USER obcy (Anna) -> 200
+GET http://localhost:3000/api/auth/me
+Authorization: Bearer {{other}}
+
+###
+
+### GET /api/auth/me - ADMIN -> 200
+GET http://localhost:3000/api/auth/me
+Authorization: Bearer {{admin}}
+
+###
+
+# ----- GET /api/reservations (USER: tylko własne = 1 rez., ADMIN: wszystkie = 5 rez.) -----
+
+### GET /api/reservations - brak tokenu -> 401
+GET http://localhost:3000/api/reservations
+
+###
+
+### GET /api/reservations - USER właściciel (Jan) -> 200
+GET http://localhost:3000/api/reservations
+Authorization: Bearer {{owner}}
+
+###
+
+### GET /api/reservations - USER obcy (Anna) -> 200
+GET http://localhost:3000/api/reservations
+Authorization: Bearer {{other}}
+
+###
+
+### GET /api/reservations - ADMIN -> 200
+GET http://localhost:3000/api/reservations
+Authorization: Bearer {{admin}}
+
+###
+
+# ----- GET /api/reservations?userId=3 (filtr tylko dla ADMINa) -----
+
+### GET /api/reservations?userId=3 - brak tokenu -> 401
+GET http://localhost:3000/api/reservations?userId=3
+
+###
+
+### GET /api/reservations?userId=3 - USER właściciel (Jan) -> 403
+GET http://localhost:3000/api/reservations?userId=3
+Authorization: Bearer {{owner}}
+
+###
+
+### GET /api/reservations?userId=3 - USER obcy (Anna) -> 403
+GET http://localhost:3000/api/reservations?userId=3
+Authorization: Bearer {{other}}
+
+###
+
+### GET /api/reservations?userId=3 - ADMIN -> 200
+GET http://localhost:3000/api/reservations?userId=3
+Authorization: Bearer {{admin}}
+
+###
+
+# ----- POST /api/reservations (każdy zalogowany, właściciel z tokenu) -----
+
+### POST /api/reservations - brak tokenu -> 401
+POST http://localhost:3000/api/reservations
+Content-Type: application/json
+
+{"roomId":5,"participants":5,"startTime":"2027-08-01T10:00:00Z","endTime":"2027-08-01T12:00:00Z"}
+
+###
+
+### POST /api/reservations - USER właściciel (Jan) -> 201
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{owner}}
+Content-Type: application/json
+
+{"roomId":5,"participants":5,"startTime":"2027-08-02T10:00:00Z","endTime":"2027-08-02T12:00:00Z"}
+
+###
+
+### POST /api/reservations - USER obcy (Anna) -> 201
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{other}}
+Content-Type: application/json
+
+{"roomId":5,"participants":5,"startTime":"2027-08-03T10:00:00Z","endTime":"2027-08-03T12:00:00Z"}
+
+###
+
+### POST /api/reservations - ADMIN -> 201
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{admin}}
+Content-Type: application/json
+
+{"roomId":5,"participants":5,"startTime":"2027-08-04T10:00:00Z","endTime":"2027-08-04T12:00:00Z"}
+
+###
+
+# ----- GET /api/reservations/2 (rezerwacja Jana) -----
+
+### GET /api/reservations/2 - brak tokenu -> 401
+GET http://localhost:3000/api/reservations/2
+
+###
+
+### GET /api/reservations/2 - USER właściciel (Jan) -> 200
+GET http://localhost:3000/api/reservations/2
+Authorization: Bearer {{owner}}
+
+###
+
+### GET /api/reservations/2 - USER obcy (Anna) -> 404
+GET http://localhost:3000/api/reservations/2
+Authorization: Bearer {{other}}
+
+###
+
+### GET /api/reservations/2 - ADMIN -> 200
+GET http://localhost:3000/api/reservations/2
+Authorization: Bearer {{admin}}
+
+###
+
+# ----- PATCH /api/reservations/2/cancel (rezerwacja Jana; kolejność: obcy, właściciel, ADMIN) -----
+
+### PATCH /api/reservations/2/cancel - brak tokenu -> 401
+PATCH http://localhost:3000/api/reservations/2/cancel
+
+###
+
+### PATCH /api/reservations/2/cancel - USER obcy (Anna) -> 404
+PATCH http://localhost:3000/api/reservations/2/cancel
+Authorization: Bearer {{other}}
+
+###
+
+### PATCH /api/reservations/2/cancel - USER właściciel (Jan) -> 200
+PATCH http://localhost:3000/api/reservations/2/cancel
+Authorization: Bearer {{owner}}
+
+###
+
+### PATCH /api/reservations/2/cancel - ADMIN -> 200 (idempotentnie: już anulowana przez właściciela)
+PATCH http://localhost:3000/api/reservations/2/cancel
+Authorization: Bearer {{admin}}
+

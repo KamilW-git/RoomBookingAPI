@@ -1,0 +1,996 @@
+openapi: 3.0.3
+info:
+  title: Room Booking API
+  version: 2.0.0
+  description: |
+    API do rezerwacji sal (PostgreSQL, użytkownicy z rolami USER i ADMIN).
+    Wszystkie daty są w formacie ISO 8601. Na wejściu akceptowana jest strefa czasowa
+    (`Z` albo np. `+01:00`), na wyjściu zawsze zwracany jest UTC (`...Z`).
+servers:
+  - url: /
+    description: Ten sam serwer, z którego pochodzi dokumentacja (działa na dowolnym porcie)
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+    description: Rejestracja, logowanie (token JWT) i dane zalogowanego użytkownika
+  - name: Buildings
+    description: "Budynki: odczyt dla każdego zalogowanego, zapis tylko ADMIN"
+  - name: Rooms
+    description: "Sale: odczyt dla każdego zalogowanego, zapis tylko ADMIN"
+  - name: Reservations
+    description: "Rezerwacje: USER widzi i anuluje swoje, ADMIN wszystkie"
+  - name: Debug
+    description: Tymczasowy endpoint do pokazania obsługi nieoczekiwanego błędu (500)
+paths:
+  /api/auth/register:
+    post:
+      summary: Rejestracja nowego użytkownika
+      description: |
+        Tworzy konto z rolą `USER` (rola zawsze nadawana przez serwer; konto `ADMIN` powstaje tylko w seedzie).
+        E-mail jest normalizowany do małych liter. Hasło ma 10-72 znaki i jest zapisywane wyłącznie
+        jako hash bcrypt. Pole `role` oraz każde inne nieznane pole kończy się błędem 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              email: Jan.Kowalski@example.com
+              password: bardzo-dlugie-haslo
+      responses:
+        '201':
+          description: Konto utworzone (odpowiedź nie zawiera hasha hasła)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Niepoprawne dane (zły e-mail, hasło poza 10-72 znaków, nieznane pole, np. `role`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Konto z takim adresem e-mail już istnieje (kod `EMAIL_TAKEN`), także przy równoległych rejestracjach
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: EMAIL_TAKEN
+                  message: Konto z takim adresem e-mail już istnieje.
+                  requestId: 6f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f
+      security: []
+      tags:
+        - Auth
+  /api/auth/login:
+    post:
+      summary: Logowanie (zwraca token JWT)
+      description: |
+        Zwraca token JWT (HS256) z claimami `sub` (ID użytkownika jako tekst), `role`, `iat` i `exp`.
+        Payload nie zawiera e-maila, hasha ani innych danych osobowych. Czas życia tokenu konfiguruje
+        zmienna `JWT_EXPIRES_IN` (domyślnie 15 minut). Zły e-mail i złe hasło dają identyczną odpowiedź 401.
+        Token przekazuje się w nagłówku `Authorization: Bearer <token>` (przycisk **Authorize**).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: admin@example.com
+              password: haslo-administratora
+      responses:
+        '200':
+          description: Token dostępu
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Niepoprawne dane (zły format e-maila, brak pól, nieznane pole, hasło dłuższe niż 72 znaki)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Nieprawidłowy e-mail lub hasło (jedna, taka sama odpowiedź dla obu przypadków)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: Invalid email or password
+                  requestId: 7c3d9a52-1b4e-4f6a-9d8c-2e5f0a1b3c4d
+      security: []
+      tags:
+        - Auth
+  /api/auth/me:
+    get:
+      summary: Dane zalogowanego użytkownika
+      description: Zwraca konto powiązane z tokenem (bez hasha hasła).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Zalogowany użytkownik
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: |
+            Brak uwierzytelnienia. Kody błędu (`error.code`):
+            - `AUTH_REQUIRED` - brak nagłówka `Authorization`,
+            - `INVALID_AUTH_HEADER` - zły format nagłówka (np. `Basic ...` albo samo `Bearer`),
+            - `INVALID_TOKEN` - zły podpis, zmodyfikowany payload, niedozwolony algorytm lub konto już nie istnieje,
+            - `TOKEN_EXPIRED` - token wygasł (wystarczy zalogować się ponownie).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: TOKEN_EXPIRED
+                  message: Token expired
+                  requestId: 5a1e8d37-6c2b-4e9f-a3d4-7b0c1f2e3a4b
+      tags:
+        - Auth
+  /api/rooms:
+    get:
+      summary: Lista wszystkich sal
+      responses:
+        '200':
+          description: Lista sal
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Room'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+      tags:
+        - Rooms
+    post:
+      summary: Utwórz salę w budynku
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoomRequest'
+            example:
+              buildingId: 1
+              name: '201'
+              capacity: 25
+      responses:
+        '201':
+          description: Sala utworzona
+          headers:
+            Location:
+              description: Adres utworzonej sali
+              schema:
+                type: string
+                example: /api/rooms/6
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Room'
+        '400':
+          description: Niepoprawne dane (kształt, typy, nieznane pola)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Budynek o podanym buildingId nie istnieje
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Sala o takiej nazwie już istnieje w tym budynku (kod `RESOURCE_ALREADY_EXISTS`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: RESOURCE_ALREADY_EXISTS
+                  message: Zasób o takich danych już istnieje.
+                  requestId: 2c912418-4147-4b71-964f-626ce2f00917
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+      description: Tylko ADMIN. Użytkownik z rolą USER dostaje 403.
+      tags:
+        - Rooms
+  /api/buildings:
+    get:
+      summary: Lista wszystkich budynków
+      responses:
+        '200':
+          description: Lista budynków
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Building'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+      tags:
+        - Buildings
+    post:
+      summary: Utwórz budynek
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuildingRequest'
+            example:
+              name: Budynek C
+              address: ul. Długa 1, Kraków
+      responses:
+        '201':
+          description: Budynek utworzony
+          headers:
+            Location:
+              description: Adres utworzonego budynku
+              schema:
+                type: string
+                example: /api/buildings/3
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Building'
+        '400':
+          description: Niepoprawne dane (kształt, typy, nieznane pola)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Budynek o takiej nazwie już istnieje (kod `RESOURCE_ALREADY_EXISTS`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+      description: Tylko ADMIN. Użytkownik z rolą USER dostaje 403.
+      tags:
+        - Buildings
+  /api/buildings/{id}:
+    get:
+      summary: Pojedynczy budynek po ID
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Znaleziony budynek
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Building'
+        '400':
+          description: ID ma niepoprawny format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Budynek o podanym ID nie istnieje
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+      tags:
+        - Buildings
+  /api/buildings/{id}/rooms:
+    get:
+      summary: Sale danego budynku
+      description: Budynek bez sal zwraca pustą tablicę `[]`. Wykonuje stałą liczbę zapytań SQL (2).
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Sale budynku (pusta tablica, gdy budynek nie ma sal)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Room'
+        '400':
+          description: ID ma niepoprawny format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Budynek o podanym ID nie istnieje
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+      tags:
+        - Buildings
+  /api/rooms/{id}:
+    get:
+      summary: Pojedyncza sala po ID
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Znaleziona sala
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Room'
+        '400':
+          description: ID ma niepoprawny format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Sala o podanym ID nie istnieje
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+      tags:
+        - Rooms
+  /api/reservations:
+    get:
+      summary: Lista rezerwacji z filtrowaniem, sortowaniem i paginacją
+      description: |
+        Wszystkie parametry są opcjonalne. Filtrowanie, sortowanie i paginację wykonuje baza danych
+        (`WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`). Przy równych wartościach sortowanie jest stabilne
+        (dodatkowo po `id`). Strona poza zakresem zwraca `200` i pustą tablicę `data`.
+
+        **Zakres danych zależy od roli.** `USER` widzi wyłącznie SWOJE rezerwacje: filtr po właścicielu dokłada
+        serwer, niezależnie od pozostałych parametrów (`roomId`, `buildingId`, `from`/`to` itd. działają, ale tylko
+        w obrębie jego rezerwacji). `ADMIN` widzi wszystkie rezerwacje i może zawęzić listę parametrem `userId`.
+        Parametr `userId` podany przez `USER` kończy się błędem `403` (zamiast cichego zignorowania).
+
+        W adresie URL znak `+` w strefie czasowej trzeba zakodować jako `%2B` (np. `...T10:00:00%2B01:00`);
+        najprościej używać strefy `Z`.
+      parameters:
+        - name: roomId
+          in: query
+          required: false
+          description: Tylko rezerwacje danej sali
+          schema:
+            type: integer
+            minimum: 1
+            example: 3
+        - name: buildingId
+          in: query
+          required: false
+          description: Tylko rezerwacje sal w danym budynku
+          schema:
+            type: integer
+            minimum: 1
+            example: 1
+        - name: userId
+          in: query
+          required: false
+          description: Tylko rezerwacje danego użytkownika. Dostępne wyłącznie dla roli ADMIN (USER dostaje 403).
+          schema:
+            type: integer
+            minimum: 1
+            example: 3
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ CONFIRMED, CANCELLED ]
+        - name: from
+          in: query
+          required: false
+          description: |
+            Początek przedziału `[from, to)`. Zwracane są rezerwacje, które NAKŁADAJĄ się na przedział
+            (`startTime < to` i `from < endTime`), np. rezerwacja 10:00-12:00 jest widoczna dla
+            `from=11:00&to=11:30`. ISO 8601 ze strefą czasową.
+          schema:
+            type: string
+            format: date-time
+            example: '2026-11-01T00:00:00Z'
+        - name: to
+          in: query
+          required: false
+          description: Koniec przedziału `[from, to)`; musi być późniejszy niż `from` (inaczej 400)
+          schema:
+            type: string
+            format: date-time
+            example: '2026-11-30T23:59:59Z'
+        - name: page
+          in: query
+          required: false
+          description: Numer strony (minimum 1)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          description: Rozmiar strony (1-100)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: sort
+          in: query
+          required: false
+          description: Sortowanie (prefiks `-` oznacza malejąco). Tylko wartości z listy.
+          schema:
+            type: string
+            enum: [ startTime, -startTime, createdAt, -createdAt, participants, -participants ]
+            default: startTime
+      responses:
+        '200':
+          description: Strona rezerwacji z danymi stronicowania
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationPage'
+        '400':
+          description: |
+            Niepoprawne parametry (zła wartość `sort` lub `status`, `page` < 1, `limit` poza 1-100,
+            `from >= to`, zły format daty lub ID). Zwracane są wszystkie błędy naraz.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+      tags:
+        - Reservations
+    post:
+      summary: Utwórz rezerwację
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationRequest'
+            example:
+              roomId: 1
+              participants: 20
+              startTime: '2026-11-10T10:00:00.000Z'
+              endTime: '2026-11-10T12:00:00.000Z'
+      responses:
+        '201':
+          description: Rezerwacja utworzona (status CONFIRMED)
+          headers:
+            Location:
+              description: Adres utworzonej rezerwacji
+              schema:
+                type: string
+                example: /api/reservations/2
+            X-Request-Id:
+              description: Identyfikator żądania
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+        '400':
+          description: |
+            Niepoprawne dane rezerwacji (kształt/typy) albo złamana reguła czasowa:
+            `endTime` musi być późniejsze niż `startTime`, czas trwania 15 minut - 8 godzin,
+            `startTime` nie może być w przeszłości. Wszystkie błędy są zwracane naraz.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Sala o podanym roomId nie istnieje
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: |
+            Konflikt z regułą biznesową:
+            - `CONFLICT` - liczba uczestników przekracza pojemność sali,
+            - `ROOM_ALREADY_BOOKED` - termin nakłada się na aktywną (CONFIRMED) rezerwację tej sali.
+              Sprawdzenie i zapis odbywają się w jednej transakcji z blokadą wiersza sali, więc przy
+              równoległych żądaniach tylko jedno kończy się sukcesem; dodatkowo pilnuje tego exclusion
+              constraint w bazie.
+              Przedziały są półotwarte `[startTime, endTime)`, więc rezerwacja zaczynająca się
+              dokładnie o końcu poprzedniej jest dozwolona. Anulowane rezerwacje nie blokują sali.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                capacityExceeded:
+                  summary: Za mała pojemność sali
+                  value:
+                    error:
+                      code: CONFLICT
+                      message: Sala ma za małą pojemność.
+                      requestId: 9b2f6c1e-3d4a-4f7b-8a55-0c1d2e3f4a5b
+                roomAlreadyBooked:
+                  summary: Termin zajęty
+                  value:
+                    error:
+                      code: ROOM_ALREADY_BOOKED
+                      message: Sala jest już zarezerwowana w tym terminie.
+                      requestId: 4c8e1f0a-7b2d-4e9c-a1f3-5d6e7f8a9b0c
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+      tags:
+        - Reservations
+  /api/reservations/{id}:
+    get:
+      summary: Pojedyncza rezerwacja z osadzoną salą i budynkiem
+      description: Jedno zapytanie SQL (JOIN rezerwacji, sali i budynku).
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Znaleziona rezerwacja
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+        '400':
+          description: ID ma niepoprawny format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Rezerwacja nie istnieje albo należy do innego użytkownika (rezerwacje są prywatne - USER dostaje 404, nie 403, żeby nie ujawniać, że cudza rezerwacja istnieje; ADMIN widzi i anuluje wszystkie)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+      tags:
+        - Reservations
+  /api/reservations/{id}/cancel:
+    patch:
+      summary: Anuluj rezerwację (status CONFIRMED -> CANCELLED)
+      description: |
+        Dozwolone przejście: `CONFIRMED` -> `CANCELLED` (`CANCELLED` jest stanem końcowym).
+        Operacja jest idempotentna: ponowne anulowanie zwraca tę samą rezerwację bez zmian
+        (`cancelledAt` nie zmienia się). Rezerwacji, która już się rozpoczęła
+        (`startTime <= teraz`), nie można anulować.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Rezerwacja ze statusem CANCELLED i ustawionym cancelledAt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+        '400':
+          description: ID ma niepoprawny format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Rezerwacja nie istnieje albo należy do innego użytkownika (rezerwacje są prywatne - USER dostaje 404, nie 403, żeby nie ujawniać, że cudza rezerwacja istnieje; ADMIN widzi i anuluje wszystkie)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Rezerwacja już się rozpoczęła
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: RESERVATION_ALREADY_STARTED
+                  message: Nie można anulować rezerwacji, która już się rozpoczęła.
+                  requestId: 9108bf86-2035-4ce0-9ca2-653655baaf9d
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+      tags:
+        - Reservations
+  /api/debug/crash:
+    get:
+      summary: TYMCZASOWY - wywołuje nieoczekiwany błąd (500)
+      description: |
+        Rzuca `new Error("boom")`. Klient dostaje ogólny komunikat bez stack trace'u,
+        a pełny błąd trafia do logów serwera z tym samym `requestId`.
+        Endpoint do usunięcia po sprawozdaniu.
+      parameters:
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: Własny identyfikator żądania; wróci w odpowiedzi i pojawi się w logach serwera
+          schema:
+            type: string
+            example: demo-crash-0001
+      responses:
+        '500':
+          description: Nieoczekiwany błąd serwera
+          headers:
+            X-Request-Id:
+              description: Identyfikator żądania (ten sam co error.requestId)
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: INTERNAL_ERROR
+                  message: Internal server error
+                  requestId: demo-crash-0001
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+      tags:
+        - Debug
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Token JWT z `POST /api/auth/login`. Wklej sam token (bez słowa `Bearer`),
+        Swagger UI doda nagłówek `Authorization: Bearer <token>`.
+  responses:
+    Unauthorized:
+      description: "Brak uwierzytelnienia. Kody błędu (error.code): AUTH_REQUIRED (brak nagłówka Authorization), INVALID_AUTH_HEADER (zły format nagłówka), INVALID_TOKEN (zły podpis, zmodyfikowany token lub niedozwolony algorytm), TOKEN_EXPIRED (token wygasł - wystarczy zalogować się ponownie)."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: AUTH_REQUIRED
+              message: Authentication required
+              requestId: 3b9d1f6e-8a24-4c71-b5e0-1d2c3a4b5f60
+    Forbidden:
+      description: "Brak uprawnień: użytkownik jest uwierzytelniony, ale jego rola nie pozwala na tę operację (np. USER próbuje utworzyć budynek albo użyć filtra userId). Kod błędu: FORBIDDEN."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: FORBIDDEN
+              message: You do not have permission to perform this action
+              requestId: c2f8a1d4-5b6e-4a7c-9d3f-8e1b2a3c4d5e
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      description: ID zasobu (dodatnia liczba całkowita)
+      schema:
+        type: integer
+        minimum: 1
+        example: 1
+  schemas:
+    LoginRequest:
+      type: object
+      description: Nieznane pola są odrzucane z błędem 400.
+      additionalProperties: false
+      required: [ email, password ]
+      properties:
+        email:
+          type: string
+          format: email
+          description: Normalizowany do małych liter (wielkość liter nie ma znaczenia)
+          example: admin@example.com
+        password:
+          type: string
+          format: password
+          maxLength: 72
+          example: haslo-administratora
+    TokenResponse:
+      type: object
+      required: [ accessToken, tokenType, expiresIn ]
+      properties:
+        accessToken:
+          type: string
+          description: Token JWT (HS256) z claimami sub, role, iat, exp
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiQURNSU4iLCJpYXQiOjE3OTM3MzQxNTQsImV4cCI6MTc5MzczNTA1NCwic3ViIjoiMSJ9.podpis
+        tokenType:
+          type: string
+          example: Bearer
+        expiresIn:
+          type: string
+          description: Czas życia tokenu (z konfiguracji JWT_EXPIRES_IN)
+          example: 15m
+    RegisterRequest:
+      type: object
+      description: Nieznane pola (np. `role`) są odrzucane z błędem 400.
+      additionalProperties: false
+      required: [ email, password ]
+      properties:
+        email:
+          type: string
+          format: email
+          description: Normalizowany do małych liter
+          example: jan.kowalski@example.com
+        password:
+          type: string
+          minLength: 10
+          maxLength: 72
+          format: password
+          description: 10-72 znaki (i maksymalnie 72 bajty UTF-8, limit bcrypt)
+          example: bardzo-dlugie-haslo
+    User:
+      type: object
+      required: [ id, email, role, createdAt ]
+      properties:
+        id:
+          type: integer
+          example: 2
+        email:
+          type: string
+          format: email
+          example: jan.kowalski@example.com
+        role:
+          type: string
+          enum: [ USER, ADMIN ]
+          example: USER
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-11-03T09:00:00.000Z'
+    Building:
+      type: object
+      required: [ id, name, address ]
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Budynek A
+        address:
+          type: string
+          example: ul. Warszawska 24, Kraków
+        roomsCount:
+          type: integer
+          description: Liczba sal w budynku (0, gdy budynek nie ma sal)
+          example: 3
+    BuildingRequest:
+      type: object
+      description: Nieznane pola (np. id) są odrzucane z błędem 400.
+      additionalProperties: false
+      required: [ name, address ]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Budynek C
+        address:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: ul. Długa 1, Kraków
+    RoomRequest:
+      type: object
+      description: Nieznane pola (np. id) są odrzucane z błędem 400.
+      additionalProperties: false
+      required: [ buildingId, name, capacity ]
+      properties:
+        buildingId:
+          type: integer
+          minimum: 1
+          example: 1
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: '201'
+        capacity:
+          type: integer
+          minimum: 1
+          example: 25
+    Room:
+      type: object
+      required: [ id, name, capacity, building ]
+      properties:
+        id:
+          type: integer
+          example: 3
+        name:
+          type: string
+          example: '101'
+        capacity:
+          type: integer
+          example: 30
+        building:
+          $ref: '#/components/schemas/BuildingRef'
+    BuildingRef:
+      type: object
+      description: Skrócony opis budynku osadzony w odpowiedzi
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Budynek A
+    UserRef:
+      type: object
+      description: Właściciel rezerwacji (bez hasha hasła i innych danych)
+      properties:
+        id:
+          type: integer
+          example: 3
+        email:
+          type: string
+          format: email
+          example: jan.kowalski@seed.example.com
+    RoomRef:
+      type: object
+      description: Skrócony opis sali (z budynkiem) osadzony w rezerwacji
+      properties:
+        id:
+          type: integer
+          example: 3
+        name:
+          type: string
+          example: '101'
+        building:
+          $ref: '#/components/schemas/BuildingRef'
+    ReservationRequest:
+      type: object
+      description: |
+        Nieznane pola są odrzucane z błędem 400 - także `userId` i `reservedBy`: właściciel rezerwacji
+        pochodzi wyłącznie z tokenu JWT, nie z treści żądania.
+      additionalProperties: false
+      required: [ roomId, participants, startTime, endTime ]
+      properties:
+        roomId:
+          type: integer
+          minimum: 1
+          example: 1
+        participants:
+          type: integer
+          minimum: 1
+          example: 20
+        startTime:
+          type: string
+          format: date-time
+          description: ISO 8601 ze strefą czasową (Z lub +hh:mm)
+          example: '2026-11-10T10:00:00.000Z'
+        endTime:
+          type: string
+          format: date-time
+          description: ISO 8601 ze strefą czasową; musi być późniejsze niż startTime
+          example: '2026-11-10T12:00:00.000Z'
+    ReservationPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reservation'
+        meta:
+          type: object
+          properties:
+            page:
+              type: integer
+              example: 2
+            limit:
+              type: integer
+              example: 10
+            total:
+              type: integer
+              description: Liczba rekordów pasujących do filtrów (nie wszystkich w tabeli)
+              example: 37
+            totalPages:
+              type: integer
+              example: 4
+    Reservation:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 2
+        room:
+          $ref: '#/components/schemas/RoomRef'
+        user:
+          $ref: '#/components/schemas/UserRef'
+        participants:
+          type: integer
+          example: 20
+        startTime:
+          type: string
+          format: date-time
+          description: Zawsze UTC
+          example: '2026-11-10T10:00:00.000Z'
+        endTime:
+          type: string
+          format: date-time
+          description: Zawsze UTC
+          example: '2026-11-10T12:00:00.000Z'
+        status:
+          type: string
+          enum: [ CONFIRMED, CANCELLED ]
+          example: CONFIRMED
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-20T08:15:00.000Z'
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: null
+    Error:
+      type: object
+      description: |
+        Jedyny format błędu w całym API (definicja w jednym miejscu, wszędzie przez `$ref`).
+        Pole `details` występuje tylko przy błędach walidacji.
+      required: [ error ]
+      properties:
+        error:
+          type: object
+          required: [ code, message, requestId ]
+          properties:
+            code:
+              type: string
+              description: |
+                Kod maszynowy błędu. 400: `VALIDATION_ERROR`, `INVALID_JSON`; 401: `AUTH_REQUIRED`, `INVALID_AUTH_HEADER`,
+                `INVALID_TOKEN`, `TOKEN_EXPIRED`, `INVALID_CREDENTIALS`; 403: `FORBIDDEN`; 404: `NOT_FOUND`;
+                409: `CONFLICT`, `ROOM_ALREADY_BOOKED`, `RESERVATION_ALREADY_STARTED`, `EMAIL_TAKEN`, `RESOURCE_ALREADY_EXISTS`;
+                500: `INTERNAL_ERROR`.
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Validation failed
+            details:
+              type: array
+              description: Wszystkie błędy walidacji naraz (tylko przy VALIDATION_ERROR)
+              items:
+                type: object
+                properties:
+                  location:
+                    type: string
+                    enum: [ body, params, query ]
+                    example: body
+                  field:
+                    type: string
+                    example: participants
+                  message:
+                    type: string
+                    example: Number must be greater than 0
+            requestId:
+              type: string
+              description: Identyfikator żądania (ten sam co w nagłówku X-Request-Id)
+              example: 217a6ebd-016e-4918-bb1e-0d0a65532bae

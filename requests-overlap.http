@@ -1,0 +1,217 @@
+# ===== UWAGA (zestaw 04): prawie wszystkie endpointy wymagają tokenu JWT =====
+# Najpierw wyślij żądanie "loginUser" (Send Request). Pozostałe żądania używają zmiennej {{token}}.
+# Hasło kont USER z seeda to wartość SEED_USER_PASSWORD z pliku .env (wpisz ją poniżej).
+
+### Logowanie konta USER z seeda (token dla pozostałych żądań)
+# @name loginUser
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{ "email": "jan.kowalski@seed.example.com", "password": "wpisz-tutaj-SEED_USER_PASSWORD-z-pliku-.env" }
+
+###
+
+@token = {{loginUser.response.body.$.accessToken}}
+
+# Reguła: brak nakładających się rezerwacji (przedziały półotwarte [start, end))
+#
+# UWAGA: przykłady są stanowe i zakładają świeżo uruchomiony serwer (dane są w pamięci).
+# Zrestartuj serwer i wysyłaj żądania po kolei, od góry do dołu.
+# Istniejąca rezerwacja bazowa: sala 1, 10:00-12:00 (dostanie id = 2; id = 1 zajmuje rezerwacja
+# startowa z seed, która już się rozpoczęła).
+
+### 0. Rezerwacja bazowa: sala 1, 10:00-12:00  -> 201
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 1, "participants": 10,
+  "startTime": "2026-11-10T10:00:00Z", "endTime": "2026-11-10T12:00:00Z" }
+
+###
+
+### 1. 12:00-13:00 (styka się, nie nakłada)  -> 201
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 1, "participants": 10,
+  "startTime": "2026-11-10T12:00:00Z", "endTime": "2026-11-10T13:00:00Z" }
+
+###
+
+### 2. 08:00-10:00 (styka się, nie nakłada)  -> 201
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 1, "participants": 10,
+  "startTime": "2026-11-10T08:00:00Z", "endTime": "2026-11-10T10:00:00Z" }
+
+###
+
+### 3. 11:00-13:00 (nakłada się na 11:00-12:00)  -> 409 ROOM_ALREADY_BOOKED
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 1, "participants": 10,
+  "startTime": "2026-11-10T11:00:00Z", "endTime": "2026-11-10T13:00:00Z" }
+
+###
+
+### 4. 09:00-13:00 (zawiera całą istniejącą)  -> 409 ROOM_ALREADY_BOOKED
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 1, "participants": 10,
+  "startTime": "2026-11-10T09:00:00Z", "endTime": "2026-11-10T13:00:00Z" }
+
+###
+
+### 5. 10:30-11:00 (zawiera się w istniejącej)  -> 409 ROOM_ALREADY_BOOKED
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 1, "participants": 10,
+  "startTime": "2026-11-10T10:30:00Z", "endTime": "2026-11-10T11:00:00Z" }
+
+###
+
+### 6. 10:00-12:00 w INNEJ sali (2)  -> 201
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 2, "participants": 10,
+  "startTime": "2026-11-10T10:00:00Z", "endTime": "2026-11-10T12:00:00Z" }
+
+###
+
+### 7a. Anulowanie rezerwacji bazowej (id = 2)  -> 200, status CANCELLED
+PATCH http://localhost:3000/api/reservations/2/cancel
+Authorization: Bearer {{token}}
+
+###
+
+### 7b. 10:00-12:00, gdy istniejąca jest CANCELLED  -> 201
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 1, "participants": 10,
+  "startTime": "2026-11-10T10:00:00Z", "endTime": "2026-11-10T12:00:00Z" }
+
+###
+
+### 8. Strefy czasowe: 11:00-13:00+01:00 to 10:00-12:00Z (ten sam moment)  -> 409 ROOM_ALREADY_BOOKED
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 2, "participants": 10,
+  "startTime": "2026-11-10T11:00:00+01:00", "endTime": "2026-11-10T13:00:00+01:00" }
+
+###
+
+### 9. Strefy czasowe: 13:00-14:00+01:00 to 12:00-13:00Z (styka się końcem 10:00-12:00Z)  -> 201
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 2, "participants": 10,
+  "startTime": "2026-11-10T13:00:00+01:00", "endTime": "2026-11-10T14:00:00+01:00" }
+
+###
+
+# --- Reguły czasu trwania i przeszłości (wszystkie -> 400 VALIDATION_ERROR) ---
+
+### 10. endTime == startTime  -> 400
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 3, "participants": 10,
+  "startTime": "2026-11-10T10:00:00Z", "endTime": "2026-11-10T10:00:00Z" }
+
+###
+
+### 11. endTime przed startTime  -> 400
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 3, "participants": 10,
+  "startTime": "2026-11-10T12:00:00Z", "endTime": "2026-11-10T10:00:00Z" }
+
+###
+
+### 12. 10 minut (minimum 15)  -> 400
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 3, "participants": 10,
+  "startTime": "2026-11-10T10:00:00Z", "endTime": "2026-11-10T10:10:00Z" }
+
+###
+
+### 13. Dokładnie 15 minut (granica)  -> 201
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 3, "participants": 10,
+  "startTime": "2026-11-10T10:00:00Z", "endTime": "2026-11-10T10:15:00Z" }
+
+###
+
+### 14. 9 godzin (maksimum 8)  -> 400
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 4, "participants": 10,
+  "startTime": "2026-11-10T08:00:00Z", "endTime": "2026-11-10T17:00:00Z" }
+
+###
+
+### 15. Dokładnie 8 godzin (granica)  -> 201
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 4, "participants": 10,
+  "startTime": "2026-11-10T08:00:00Z", "endTime": "2026-11-10T16:00:00Z" }
+
+###
+
+### 16. startTime w przeszłości  -> 400
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 5, "participants": 5,
+  "startTime": "2026-01-01T10:00:00Z", "endTime": "2026-01-01T12:00:00Z" }
+
+###
+
+### 17. Kilka naruszeń naraz (przeszłość + za krótko)  -> 400 z dwoma błędami w details
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 5, "participants": 5,
+  "startTime": "2026-01-01T10:00:00Z", "endTime": "2026-01-01T10:05:00Z" }
+
+###
+
+### 18. Reguła pojemności nadal działa: sala 5 ma 8 miejsc, 9 osób  -> 409 CONFLICT
+POST http://localhost:3000/api/reservations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "roomId": 5, "participants": 9,
+  "startTime": "2026-11-10T10:00:00Z", "endTime": "2026-11-10T12:00:00Z" }
