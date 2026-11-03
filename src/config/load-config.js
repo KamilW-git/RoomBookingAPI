@@ -13,9 +13,9 @@ const notPlaceholder = (value) => !value.startsWith('change_me');
 
 const port = z
   .string()
-  .regex(/^\d+$/, 'musi być numerem portu (liczba całkowita)')
+  .regex(/^\d+$/, 'musi byc numerem portu (liczba calkowita)')
   .transform(Number)
-  .refine((value) => value >= 1 && value <= 65535, 'musi być w zakresie 1-65535');
+  .refine((value) => value >= 1 && value <= 65535, 'musi byc w zakresie 1-65535');
 
 // Schemat wszystkich zmiennych środowiskowych używanych przez aplikację. To jedyne miejsce, które je opisuje;
 // reszta kodu dostaje już gotowy, zwalidowany obiekt konfiguracji.
@@ -28,18 +28,18 @@ const envSchema = z
     STORAGE: z.enum(['knex', 'memory']).default('knex'),
     DATABASE_URL: z
       .string()
-      .url('musi być poprawnym adresem URL, np. postgresql://użytkownik:hasło@localhost:5433/baza')
+      .url('musi byc poprawnym adresem URL, np. postgresql://uzytkownik:haslo@localhost:5433/baza')
       .refine(
         (value) => /^postgres(ql)?:\/\//.test(value),
-        'musi zaczynać się od postgresql:// (lub postgres://)',
+        'musi zaczynac sie od postgresql:// (lub postgres://)',
       )
       .optional(),
 
     // Sekret do podpisywania tokenów JWT (HS256): krótki sekret da się odgadnąć lub złamać brute-force
     JWT_SECRET: z
       .string({ required_error: 'jest wymagany' })
-      .min(32, 'musi mieć co najmniej 32 znaki')
-      .refine(notPlaceholder, 'zmień wartość z .env.example na własny, losowy sekret'),
+      .min(32, 'musi miec co najmniej 32 znaki')
+      .refine(notPlaceholder, 'zmien wartosc z .env.example na wlasny, losowy sekret'),
     // Czas życia tokenu: liczba + jednostka (s, m, h, d), np. 15m, 10s, 1h
     JWT_EXPIRES_IN: z
       .string()
@@ -49,36 +49,36 @@ const envSchema = z
     // Cost factor bcrypt (minimum 10 wymagane przez zadanie)
     BCRYPT_COST: z
       .string()
-      .regex(/^\d+$/, 'musi być liczbą całkowitą')
+      .regex(/^\d+$/, 'musi byc liczba calkowita')
       .transform(Number)
-      .refine((value) => value >= 10 && value <= 15, 'musi być w zakresie 10-15')
+      .refine((value) => value >= 10 && value <= 15, 'musi byc w zakresie 10-15')
       .default('12'),
 
     // Hasło konta ADMIN tworzonego w seedzie (trzeba je podać przy seedowaniu i w trybie memory)
     SEED_ADMIN_PASSWORD: z
       .string()
-      .min(10, 'musi mieć co najmniej 10 znaków')
-      .max(72, 'może mieć co najwyżej 72 znaki')
-      .refine(notPlaceholder, 'zmień wartość z .env.example na własne hasło')
+      .min(10, 'musi miec co najmniej 10 znakow')
+      .max(72, 'moze miec co najwyzej 72 znaki')
+      .refine(notPlaceholder, 'zmien wartosc z .env.example na wlasne haslo')
       .optional(),
 
     // Hasło kont demonstracyjnych (rola USER) tworzonych w seedzie jako właściciele przykładowych rezerwacji
     SEED_USER_PASSWORD: z
       .string()
-      .min(10, 'musi mieć co najmniej 10 znaków')
-      .max(72, 'może mieć co najwyżej 72 znaki')
-      .refine(notPlaceholder, 'zmień wartość z .env.example na własne hasło')
+      .min(10, 'musi miec co najmniej 10 znakow')
+      .max(72, 'moze miec co najwyzej 72 znaki')
+      .refine(notPlaceholder, 'zmien wartosc z .env.example na wlasne haslo')
       .optional(),
 
     // Adres API używany przez skrypty pomocnicze (domyślnie http://localhost:<PORT>)
-    BASE_URL: z.string().url('musi być poprawnym adresem URL').optional(),
+    BASE_URL: z.string().url('musi byc poprawnym adresem URL').optional(),
   })
   .superRefine((env, ctx) => {
     if (env.STORAGE === 'knex' && !env.DATABASE_URL) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['DATABASE_URL'],
-        message: 'jest wymagany, gdy STORAGE=knex (domyślnie)',
+        message: 'jest wymagany, gdy STORAGE=knex (domyslnie)',
       });
     }
   });
@@ -97,9 +97,9 @@ function loadConfig(env) {
 
   if (!result.success) {
     throw new ConfigError(
-      'Błędna konfiguracja aplikacji (sprawdź plik .env, wzór w .env.example):\n' +
+      'Bledna konfiguracja aplikacji (sprawdz plik .env, wzor w .env.example):\n' +
         `${formatIssues(result.error)}\n` +
-        'Aplikacja nie została uruchomiona.',
+        'Aplikacja nie zostala uruchomiona.',
     );
   }
 
