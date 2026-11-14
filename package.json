@@ -5,8 +5,9 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "test": "jest",
+    "test": "jest --runInBand",
     "test:unit": "jest --selectProjects unit",
+    "test:integration": "jest --selectProjects integration --runInBand",
     "test:mutation-overlap": "node scripts/mutation-overlap.js",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
@@ -39,6 +40,7 @@
   },
   "devDependencies": {
     "jest": "30.5.2",
-    "playwright-core": "1.49.1"
+    "playwright-core": "1.49.1",
+    "supertest": "7.1.4"
   }
 }

@@ -11,6 +11,14 @@ class ConfigError extends Error {
 // Wartości-wzory z .env.example (zaczynają się od "change_me") nie mogą trafić do działającej aplikacji
 const notPlaceholder = (value) => !value.startsWith('change_me');
 
+const postgresUrl = z
+  .string()
+  .url('musi byc poprawnym adresem URL, np. postgresql://uzytkownik:haslo@localhost:5433/baza')
+  .refine((value) => /^postgres(ql)?:\/\//.test(value), 'musi zaczynac sie od postgresql:// (lub postgres://)');
+
+// Nazwa bazy z adresu połączenia (część ścieżki po "/")
+const databaseName = (url) => decodeURIComponent(new URL(url).pathname.slice(1));
+
 const port = z
   .string()
   .regex(/^\d+$/, 'musi byc numerem portu (liczba calkowita)')
@@ -26,14 +34,12 @@ const envSchema = z
 
     // knex (PostgreSQL, domyślnie) albo memory (tablice w pamięci)
     STORAGE: z.enum(['knex', 'memory']).default('knex'),
-    DATABASE_URL: z
-      .string()
-      .url('musi byc poprawnym adresem URL, np. postgresql://uzytkownik:haslo@localhost:5433/baza')
-      .refine(
-        (value) => /^postgres(ql)?:\/\//.test(value),
-        'musi zaczynac sie od postgresql:// (lub postgres://)',
-      )
-      .optional(),
+    DATABASE_URL: postgresUrl.optional(),
+    // Osobna baza dla testów integracyjnych (NODE_ENV=test). Nigdy ta sama co deweloperska.
+    TEST_DATABASE_URL: postgresUrl.optional(),
+
+    // info: wszystkie logi (domyślnie), error: tylko błędy (domyślnie w testach), silent: nic
+    LOG_LEVEL: z.enum(['info', 'error', 'silent']).optional(),
 
     // Sekret do podpisywania tokenów JWT (HS256): krótki sekret da się odgadnąć lub złamać brute-force
     JWT_SECRET: z
@@ -74,6 +80,29 @@ const envSchema = z
     BASE_URL: z.string().url('musi byc poprawnym adresem URL').optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.NODE_ENV === 'test') {
+      // Testy integracyjne czyszczą tabele przed każdym testem, więc nie mogą trafić w bazę deweloperską
+      if (!env.TEST_DATABASE_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['TEST_DATABASE_URL'],
+          message: 'jest wymagany, gdy NODE_ENV=test (osobna baza testowa)',
+        });
+      } else if (!databaseName(env.TEST_DATABASE_URL).endsWith('_test')) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['TEST_DATABASE_URL'],
+          message: 'nazwa bazy testowej musi konczyc sie na _test',
+        });
+      } else if (env.DATABASE_URL && databaseName(env.TEST_DATABASE_URL) === databaseName(env.DATABASE_URL)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['TEST_DATABASE_URL'],
+          message: 'musi wskazywac inna baze niz DATABASE_URL',
+        });
+      }
+      return;
+    }
     if (env.STORAGE === 'knex' && !env.DATABASE_URL) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -105,11 +134,14 @@ function loadConfig(env) {
 
   const data = result.data;
   const appPort = data.PORT ?? 3000;
+  const isTest = data.NODE_ENV === 'test';
   return Object.freeze({
     nodeEnv: data.NODE_ENV,
     port: appPort,
     storage: data.STORAGE,
-    databaseUrl: data.DATABASE_URL,
+    // W testach cała aplikacja (i Knex) łączy się wyłącznie z bazą testową
+    databaseUrl: isTest ? data.TEST_DATABASE_URL : data.DATABASE_URL,
+    logLevel: data.LOG_LEVEL ?? (isTest ? 'error' : 'info'),
     baseUrl: data.BASE_URL ?? `http://localhost:${appPort}`,
     bcryptCost: data.BCRYPT_COST,
     seedAdminPassword: data.SEED_ADMIN_PASSWORD,

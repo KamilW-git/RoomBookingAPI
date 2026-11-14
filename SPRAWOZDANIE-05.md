@@ -99,3 +99,100 @@ poprzedniej byłaby błędnie uznana za kolizję. Po przywróceniu kodu wszystki
 | Rys. 1.1 | `npm run test:unit -- --verbose` | lista 27 zaliczonych testów |
 | Rys. 1.2 | `npm run test:mutation-overlap` | wprowadzony błąd, 2 testy failed, przywrócenie kodu |
 | Rys. 1.3 | `npm run test:unit` | ponownie 27/27 po przywróceniu kodu |
+
+## Zadanie 2 - Testy integracyjne API
+
+### Środowisko testowe
+
+- **Supertest** wywołuje aplikację z `createApp()` bezpośrednio, bez `app.listen()` i bez portu.
+- **Osobna baza testowa**: `TEST_DATABASE_URL` (lokalnie `roombooking_test` na tym samym serwerze PostgreSQL). Przy
+  `NODE_ENV=test` cała aplikacja i Knex łączą się wyłącznie z nią. Konfiguracja (Zod) **odrzuca** bazę, której nazwa nie
+  kończy się na `_test` albo jest taka sama jak `DATABASE_URL`, więc testy nie mogą wyczyścić bazy deweloperskiej.
+- `globalSetup` zakłada bazę testową, jeśli jej nie ma; **schemat tworzą migracje w `beforeAll`**
+  (`knex.migrate.latest()`), a **przed każdym testem** tabele są czyszczone (`TRUNCATE ... RESTART IDENTITY CASCADE`)
+  i wypełniane małym, znanym zestawem danych (3 konta, budynek, sala).
+- `afterAll` zamyka pulę połączeń (`knex.destroy()`): `jest --detectOpenHandles` nie zgłasza otwartych uchwytów.
+- Testy działają sekwencyjnie (`--runInBand`), bo dzielą jedną bazę testową.
+
+```js
+// tests/integration/setup-env.js - ładowany przed kodem aplikacji (setupFiles i globalSetup)
+process.env.NODE_ENV = 'test';                                        // -> TEST_DATABASE_URL
+process.env.JWT_SECRET = crypto.randomBytes(32).toString('hex');      // losowy sekret na każde uruchomienie
+process.env.BCRYPT_COST = '10';                                       // szybsze hashowanie w testach
+```
+
+```js
+// jest.config.js
+module.exports = {
+  projects: [
+    { displayName: 'unit', testEnvironment: 'node', testMatch: ['<rootDir>/tests/unit/**/*.test.js'] },
+    {
+      displayName: 'integration',
+      testEnvironment: 'node',
+      testMatch: ['<rootDir>/tests/integration/**/*.test.js'],
+      setupFiles: ['<rootDir>/tests/integration/setup-env.js'],
+      globalSetup: '<rootDir>/tests/integration/global-setup.js',
+    },
+  ],
+};
+```
+
+```js
+// tests/helpers/integration-context.js (fragment)
+beforeAll(async () => {
+  ctx.knex = knexFactory(knexConfig);            // połączenie z bazą TESTOWĄ (config.databaseUrl)
+  await ctx.knex.migrate.latest();               // schemat z migracji
+  const app = createApp({ ...createKnexRepositories(ctx.knex), passwordHasher, tokenService });
+  ctx.request = () => request(app);              // Supertest, bez uruchamiania serwera
+});
+beforeEach(async () => {
+  await ctx.knex.raw('TRUNCATE reservations, rooms, buildings, users RESTART IDENTITY CASCADE');
+  // ... wstawienie kont testowych, budynku i sali
+});
+afterAll(async () => {
+  await ctx.knex?.destroy();                     // brak open handles
+});
+```
+
+### Testy (10, plik `tests/integration/api.test.js`)
+
+| Test | Sprawdza |
+| --- | --- |
+| rejestracja + logowanie + `GET /api/auth/me` | 201 (e-mail małymi literami, brak hasha), 200 z tokenem, 200 z danymi konta |
+| `401 AUTH_REQUIRED` bez tokenu | kod błędu, `requestId`, nagłówek `WWW-Authenticate: Bearer` |
+| `POST /api/reservations` -> 201 | nagłówek `Location`, **rekord w bazie** (`room_id`, `user_id`, czasy) |
+| 400 dla błędnego body | `details` dokładnie dla pól `roomId`, `participants`, `startTime`, `endTime` i nieznanego `userId`; brak zapisu w bazie |
+| `409 ROOM_ALREADY_BOOKED` | nakładająca się rezerwacja innego użytkownika; w bazie nadal 1 rekord |
+| pagination | 5 rekordów, `limit=2` -> 2 elementy w `data`, `meta: { page: 1, limit: 2, total: 5, totalPages: 3 }` |
+| `403 FORBIDDEN` | USER tworzy salę; tabela `rooms` bez zmian |
+| ADMIN tworzy salę -> 201 | nagłówek `Location` |
+| `404 NOT_FOUND` | USER pobiera cudzą rezerwację |
+| właściciel i ADMIN -> 200 | ta sama rezerwacja widoczna dla właściciela i ADMINa |
+
+```js
+test('POST /api/reservations -> 201, nagłówek Location i rekord w bazie', async () => {
+  const response = await ctx.request()
+    .post('/api/reservations')
+    .set('Authorization', await ctx.authHeader('jan'))
+    .send(reservationBody('10:00', '12:00'))
+    .expect(201);
+
+  expect(response.headers.location).toBe(`/api/reservations/${response.body.id}`);
+  const row = await ctx.knex('reservations').where({ id: response.body.id }).first();
+  expect(row).toMatchObject({ room_id: ctx.room.id, user_id: ctx.users.jan.id, status: 'CONFIRMED' });
+});
+```
+
+### Wyniki
+
+- `npm run test:integration` na świeżej bazie (przed uruchomieniem `DROP DATABASE roombooking_test`): `globalSetup`
+  zakłada bazę, migracje tworzą schemat, **10/10** testów przechodzi.
+- `npm test` (unit + integration razem): **2 suites, 37/37 testów**, bez ostrzeżeń o open handles.
+- Baza deweloperska po testach nie zmieniła się (nadal 5 rezerwacji i 6 kont z seeda).
+
+### Zrzuty (wykonywane ręcznie w terminalu)
+
+| Rysunek | Polecenie | Co pokazuje |
+| --- | --- | --- |
+| Rys. 2.1 | `npm test -- --verbose` | wynik unit + integration razem (37 testów) |
+| Rys. 2.2 | `jest.config.js` i `tests/integration/setup-env.js` | konfiguracja środowiska testowego |

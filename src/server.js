@@ -8,12 +8,7 @@ const seedData = require('../db/seed-data');
 const { createPasswordHasher } = require('./modules/auth/password-hasher');
 const { createTokenService } = require('./modules/auth/token-service');
 const { createMemoryRepositories } = require('./shared/memory-repositories');
-const { createUsersKnexRepository } = require('./modules/users/users.repository.knex');
-const { createBuildingsKnexRepository } = require('./modules/buildings/buildings.repository.knex');
-const { createRoomsKnexRepository } = require('./modules/rooms/rooms.repository.knex');
-const {
-  createReservationsKnexRepository,
-} = require('./modules/reservations/reservations.repository.knex');
+const { createKnexRepositories } = require('./shared/knex-repositories');
 
 // Jedyne miejsce, które wybiera implementację repositories: STORAGE=knex (PostgreSQL, domyślnie)
 // albo STORAGE=memory (tablice w pamięci). Reszta aplikacji nie wie, z którą pracuje.
@@ -46,25 +41,7 @@ async function createRepositories(storage, passwordHasher) {
     const knex = knexFactory(knexConfig);
     // Szybka diagnoza: jeśli bazy nie ma, serwer nie startuje i mówi dlaczego
     await knex.raw('select 1');
-    return {
-      repositories: {
-        usersRepository: createUsersKnexRepository(knex),
-        buildingsRepository: createBuildingsKnexRepository(knex),
-        roomsRepository: createRoomsKnexRepository(knex),
-        reservationsRepository: createReservationsKnexRepository(knex),
-        // Prawdziwa transakcja bazy: repositories przekazane do `work` używają tego samego połączenia
-        // (trx). Commit po zakończeniu `work`, rollback po rzuceniu błędu.
-        runInTransaction: (work) =>
-          knex.transaction((trx) =>
-            work({
-              buildingsRepository: createBuildingsKnexRepository(trx),
-              roomsRepository: createRoomsKnexRepository(trx),
-              reservationsRepository: createReservationsKnexRepository(trx),
-            }),
-          ),
-      },
-      close: () => knex.destroy(),
-    };
+    return { repositories: createKnexRepositories(knex), close: () => knex.destroy() };
   }
 
   throw new Error(`Nieznana wartość STORAGE: "${storage}" (dozwolone: knex, memory)`);
