@@ -1,5 +1,7 @@
 # Room Booking API
 
+[![CI](https://github.com/KamilW-git/RoomBookingAPI/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/KamilW-git/RoomBookingAPI/actions/workflows/ci.yml)
+
 REST API do rezerwacji sal (Node.js, Express 5, PostgreSQL, Knex, JWT). Użytkownicy z rolami `USER` i `ADMIN`,
 rezerwacje bez nakładania się terminów (transakcja + exclusion constraint), dokumentacja OpenAPI w Swagger UI.
 
@@ -70,6 +72,11 @@ npm test                   # wszystko razem
 
 Testy integracyjne same zakładają bazę testową (nazwa musi kończyć się na `_test`), tworzą schemat migracjami
 i czyszczą dane przed każdym testem, więc nigdy nie dotykają bazy deweloperskiej.
+
+## Continuous Integration
+
+Workflow `.github/workflows/ci.yml` (GitHub Actions) uruchamia się przy każdym push do `main` i przy każdym
+pull requeście: PostgreSQL jako `services` (z health check) -> `npm ci` -> `npm test` -> `docker build .`.
 
 ## Konfiguracja
 

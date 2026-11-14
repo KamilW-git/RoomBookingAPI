@@ -1,0 +1,62 @@
+name: CI
+
+# Przy każdym push do main i przy każdym pull requeście
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Nowy push do tego samego brancha / PR anuluje poprzednie, niedokończone uruchomienie
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Testy (unit + integration) i build obrazu Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # PostgreSQL tylko dla tego joba. Kontener istnieje wyłącznie na czas uruchomienia i nie jest dostępny
+    # z zewnątrz, więc nie ma hasła (trust) - w workflow nie ma żadnego sekretu.
+    services:
+      postgres:
+        image: postgres:16.15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: roombooking_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d roombooking_test"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      # Testy integracyjne łączą się wyłącznie z bazą testową (nazwa *_test wymagana przez src/config).
+      # JWT_SECRET i hasła kont testowych testy losują same (tests/integration/setup-env.js).
+      TEST_DATABASE_URL: postgresql://postgres@localhost:5432/roombooking_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js (z cache npm)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalacja zależności
+        run: npm ci
+
+      - name: Testy (npm test)
+        run: npm test
+
+      - name: Build obrazu Docker
+        run: docker build -t roombooking-api:ci .
