@@ -418,3 +418,82 @@ Skrypt **tymczasowo** podstawia repository audit logu, którego zapis zawsze rzu
 | Rys. 4.3 | `zad4_rys4.3_swagger_audit_log_filtr.png` | filtr `?eventType=reservation.cancelled` |
 | Rys. 4.4 | terminal: `npm run demo:listener-failure` | listener rzuca wyjątek, a klient dostaje 201 |
 | Rys. 4.5 | terminal: `docker compose logs api` | komunikat `[notification] to: ...` |
+
+## Zadanie 5 - Continuous Integration w GitHub Actions
+
+Repozytorium: https://github.com/KamilW-git/RoomBookingAPI
+
+### Workflow `.github/workflows/ci.yml`
+
+```yaml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust      # kontener tylko na czas joba - bez hasła, więc bez sekretów
+          POSTGRES_DB: roombooking_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d roombooking_test"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://postgres@localhost:5432/roombooking_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: docker build -t roombooking-api:ci .
+```
+
+- Uruchamiany przy `push` do `main` i przy każdym pull requeście.
+- PostgreSQL jako `services` z health check (job czeka, aż baza będzie gotowa).
+- Kroki: checkout -> setup Node.js z cache npm -> `npm ci` -> `npm test` (unit + integration) -> `docker build .`.
+- **Brak sekretów w workflow**: baza CI działa w trybie `trust` (kontener istnieje tylko na czas joba i nie jest dostępny
+  z zewnątrz), a `JWT_SECRET` i hasła kont testowych testy losują same (`tests/integration/setup-env.js`). Nie było
+  potrzeby używania `secrets`.
+- Przed wypchnięciem workflow zasymulowano lokalnie: czysta kopia projektu bez `.env`, PostgreSQL w trybie `trust`,
+  `npm ci` i `npm test` -> 57/57.
+- Badge statusu CI w `README.md`:
+  `[![CI](https://github.com/KamilW-git/RoomBookingAPI/actions/workflows/ci.yml/badge.svg?branch=main)](...)`.
+
+### CI chroni projekt (PR #1)
+
+1. Branch `ci-demo-regula-nakladania`, commit `ab57ccc`: reguła nakładania zmieniona z przedziałów półotwartych
+   `[start, end)` na domknięte (`<` -> `<=`), przez co rezerwacje stykające się byłyby błędnie odrzucane.
+   Pull request #1 -> **uruchomienie #2: Failure** (2 unit testy przedziałów stykających się).
+2. Poprawka w tym samym PR, commit `87a6e42` (przywrócenie `<`) -> **uruchomienie #3: Success**.
+3. Merge PR #1 do `main` (`7ad9f8f`) -> uruchomienie #4 na `main`: Success.
+
+| Uruchomienie | Zdarzenie | Commit | Wynik |
+| --- | --- | --- | --- |
+| #1 | push `main` | `6cd3fe1` (dodanie workflow) | Success |
+| #2 | pull request #1 | `ab57ccc` (celowy błąd) | **Failure** |
+| #3 | pull request #1 | `87a6e42` (poprawka) | **Success** |
+| #4 | push `main` (merge PR #1) | `7ad9f8f` | Success |
+
+Historia commitów pokazuje rozwój projektu: osobne commity dla każdego zadania (unit testy, testy integracyjne,
+Docker Compose, eventy, CI) oraz commity z PR #1.
+
+### Zrzuty
+
+| Rysunek | Plik | Co pokazuje |
+| --- | --- | --- |
+| Rys. 5.1 | `zad5_rys5.1_ci_czerwone.png` | uruchomienie #2 dla PR z błędem: Failure |
+| Rys. 5.2 | `zad5_rys5.3_ci_zielone.png` | uruchomienie #3 po poprawce w tym samym PR: Success |
+| Rys. 5.3 | `zad5_rys5.5_readme_badge.png` | README z badge CI (passing) |
+| (opcjonalnie) | `zad5_rys5.4_pr_zielony.png` | PR #1: commit z błędem (✗) i commit z poprawką (✓) |
