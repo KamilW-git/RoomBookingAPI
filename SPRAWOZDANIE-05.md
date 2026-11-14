@@ -196,3 +196,95 @@ test('POST /api/reservations -> 201, nagłówek Location i rekord w bazie', asyn
 | --- | --- | --- |
 | Rys. 2.1 | `npm test -- --verbose` | wynik unit + integration razem (37 testów) |
 | Rys. 2.2 | `jest.config.js` i `tests/integration/setup-env.js` | konfiguracja środowiska testowego |
+
+## Zadanie 3 - Docker Compose
+
+### Dockerfile
+
+```dockerfile
+FROM node:22.21.1-alpine                       # konkretna wersja obrazu bazowego
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json package-lock.json ./         # najpierw manifesty zależności...
+RUN npm ci --omit=dev && npm cache clean --force   # ...i instalacja (warstwa z cache, dopóki nie zmieni się lockfile)
+COPY . .                                       # dopiero potem kod (lista wykluczeń w .dockerignore)
+USER node                                      # bez uprawnień roota
+EXPOSE 3000
+# migracje przy starcie kontenera, potem serwer; exec -> Node jest PID 1 i dostaje SIGTERM
+CMD ["sh", "-c", "node_modules/.bin/knex migrate:latest && exec node src/server.js"]
+```
+
+`.dockerignore` wyklucza m.in. `node_modules`, `.env`, `.env.*`, `.git`, testy, skrypty i zrzuty. W obrazie zostają tylko
+`src`, `db` (migracje i seed), `knexfile.js`, `openapi.yaml`, `package*.json` i zależności produkcyjne (obraz: 184 MB).
+
+### docker-compose.yml
+
+```yaml
+services:
+  db:
+    image: postgres:16.15
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?ustaw POSTGRES_USER w .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ustaw POSTGRES_PASSWORD w .env}
+      POSTGRES_DB: ${POSTGRES_DB:?ustaw POSTGRES_DB w .env}
+    volumes:
+      - roombooking_pgdata:/var/lib/postgresql/data      # named volume
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy                       # API startuje, gdy baza jest healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET:?ustaw JWT_SECRET w .env}
+      # ... pozostałe zmienne również z .env
+    ports:
+      - '${API_PORT:-3000}:3000'
+volumes:
+  roombooking_pgdata:
+```
+
+- W pliku nie ma żadnych sekretów: wszystkie wartości pochodzą z `.env` (wzór `.env.example`). Brak wymaganej zmiennej
+  zatrzymuje `docker compose` z czytelnym komunikatem (`:?`).
+- API łączy się z bazą przez sieć Compose (`db:5432`); adres składany jest ze zmiennych, więc hasło nie jest powtarzane.
+- `cp .env.example .env` wystarcza do lokalnego uruchomienia: przy `NODE_ENV=development` wartości `change_me...` są
+  dozwolone z ostrzeżeniem w logach, a przy `NODE_ENV=production` (domyślne w obrazie) aplikacja ich nie przyjmuje.
+
+### Graceful shutdown (SIGTERM)
+
+```js
+// src/server.js (fragment)
+const shutdown = (signal) => {
+  logger.info('shutdown started', { signal });
+  setTimeout(() => process.exit(1), 8000).unref();   // bezpiecznik przed SIGKILL Dockera po 10 s
+  server.close(async () => {                          // koniec nowych połączeń, trwające żądania się kończą
+    logger.info('http server closed');
+    await close();                                    // knex.destroy() - zamknięcie puli połączeń
+    logger.info('database pool closed');
+    process.exit(0);
+  });
+  server.closeIdleConnections();                      // nie czekamy na timeout bezczynnych keep-alive
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+```
+
+Wynik: `docker compose stop api` trwa 0,7 s, kontener kończy się kodem 0, a `docker compose down` całego stacku 1,7 s.
+
+### Sprawdzenie od zera
+
+Repozytorium sklonowano do nowego katalogu i wykonano wyłącznie kroki z `README.md`:
+`git clone` -> `cp .env.example .env` -> `docker compose up --build`. Wynik: obraz zbudowany, `db` healthy, migracje
+wykonane przy starcie (`Batch 1 run: 6 migrations`), Swagger UI odpowiada 200, `docker compose exec api npx knex seed:run`
+tworzy konto ADMIN (logowanie 200, `GET /api/reservations` jako ADMIN zwraca 5 rezerwacji).
+
+### Zrzuty
+
+| Rysunek | Polecenie / plik | Co pokazuje |
+| --- | --- | --- |
+| Rys. 3.1 | `docker compose ps` | oba kontenery działają, `db` jako `healthy` |
+| Rys. 3.2 | `docker compose logs api` (na świeżym klonie) | migracje przy starcie: `Batch 1 run: 6 migrations` |
+| Rys. 3.3 | `docker compose stop api` + `docker compose logs api --tail 4` | graceful shutdown: SIGTERM, zamknięcie serwera i puli |
+| Rys. 3.4 | `screenshots/zadanie05/zad3_rys3.4_swagger_z_kontenera.png` | Swagger UI serwowany przez kontener `api` |

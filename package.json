@@ -19,6 +19,7 @@
     "screenshots:zad04-3": "node scripts/screenshots/zadanie04-3.js",
     "screenshots:zad04-4": "node scripts/screenshots/zadanie04-4.js",
     "screenshots:zad04-5": "node scripts/screenshots/zadanie04-5.js",
+    "screenshots:zad05-3": "node scripts/screenshots/zadanie05-3.js",
     "docs:check": "node scripts/docs-check.js",
     "permissions:matrix": "node scripts/permissions-matrix.js",
     "demo:migration-user-id": "node scripts/migration-user-id-demo.js",
