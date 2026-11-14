@@ -14,7 +14,7 @@ const fail = (message) => problems.push(message);
 
 const METHODS = ['get', 'post', 'put', 'patch', 'delete'];
 const PUBLIC = new Set(['POST /api/auth/register', 'POST /api/auth/login']);
-const ADMIN_ONLY = new Set(['POST /api/buildings', 'POST /api/rooms']);
+const ADMIN_ONLY = new Set(['POST /api/buildings', 'POST /api/rooms', 'GET /api/admin/audit-log']);
 const CONFLICTS = new Set([
   'POST /api/auth/register',
   'POST /api/buildings',
@@ -76,7 +76,13 @@ if (!bearer || bearer.type !== 'http' || bearer.scheme !== 'bearer') fail('brak 
 if (!spec.security?.some((requirement) => 'bearerAuth' in requirement)) fail('brak globalnego security: bearerAuth');
 
 // Trasy z kodu: prefiks z app.js + ścieżka z router.<metoda>('<ścieżka>')
-const prefixes = { auth: '/api/auth', buildings: '/api/buildings', rooms: '/api/rooms', reservations: '/api/reservations' };
+const prefixes = {
+  auth: '/api/auth',
+  buildings: '/api/buildings',
+  rooms: '/api/rooms',
+  reservations: '/api/reservations',
+  'audit-log': '/api/admin',
+};
 const implemented = new Set(['GET /api/debug/crash']);
 for (const [module, prefix] of Object.entries(prefixes)) {
   const source = fs.readFileSync(path.join(root, 'src', 'modules', module, `${module}.routes.js`), 'utf8');

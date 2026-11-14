@@ -20,6 +20,8 @@ tags:
     description: "Sale: odczyt dla każdego zalogowanego, zapis tylko ADMIN"
   - name: Reservations
     description: "Rezerwacje: USER widzi i anuluje swoje, ADMIN wszystkie"
+  - name: Admin
+    description: "Panel administratora: audit log eventów domenowych (tylko ADMIN)"
   - name: Debug
     description: Tymczasowy endpoint do pokazania obsługi nieoczekiwanego błędu (500)
 paths:
@@ -620,6 +622,59 @@ paths:
           $ref: "#/components/responses/Unauthorized"
       tags:
         - Reservations
+  /api/admin/audit-log:
+    get:
+      summary: Audit log eventów domenowych (od najnowszych)
+      description: |
+        Każdy event domenowy zapisany przez listener audit logu: `reservation.created`
+        (`{ reservationId, roomId, userId, startTime, endTime }`) i `reservation.cancelled`
+        (`{ reservationId, roomId, userId, cancelledBy }`). Eventy powstają tylko po udanej operacji
+        (po zatwierdzeniu transakcji); nieudana operacja (np. 409) i idempotentne ponowne anulowanie
+        nie tworzą wpisu. Lista posortowana od najnowszych (`occurredAt` malejąco). Tylko ADMIN.
+      parameters:
+        - name: eventType
+          in: query
+          required: false
+          description: Tylko wpisy danego typu eventu
+          schema:
+            type: string
+            enum: [ reservation.created, reservation.cancelled ]
+        - name: page
+          in: query
+          required: false
+          description: Numer strony (minimum 1)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          description: Rozmiar strony (1-100)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Strona wpisów audit logu z danymi stronicowania
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogPage'
+        '400':
+          description: Niepoprawne parametry (nieznany `eventType`, `page` < 1, `limit` poza 1-100, nieznany parametr)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+      tags:
+        - Admin
   /api/debug/crash:
     get:
       summary: TYMCZASOWY - wywołuje nieoczekiwany błąd (500)
@@ -952,6 +1007,52 @@ components:
           format: date-time
           nullable: true
           example: null
+    AuditLogEntry:
+      type: object
+      required: [ id, eventType, payload, occurredAt ]
+      properties:
+        id:
+          type: integer
+          example: 3
+        eventType:
+          type: string
+          enum: [ reservation.created, reservation.cancelled ]
+          example: reservation.cancelled
+        payload:
+          type: object
+          description: Dane eventu (w bazie kolumna jsonb), kształt zależy od eventType
+          additionalProperties: true
+          example:
+            reservationId: 6
+            roomId: 1
+            userId: 3
+            cancelledBy: 1
+        occurredAt:
+          type: string
+          format: date-time
+          example: '2026-11-14T13:05:12.345Z'
+    AuditLogPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogEntry'
+        meta:
+          type: object
+          properties:
+            page:
+              type: integer
+              example: 1
+            limit:
+              type: integer
+              example: 20
+            total:
+              type: integer
+              example: 2
+            totalPages:
+              type: integer
+              example: 1
     Error:
       type: object
       description: |

@@ -1,5 +1,6 @@
 const { z } = require('zod');
 const { positiveIntFromString } = require('../../shared/id.schema');
+const { pageNumber, limitNumber } = require('../../shared/pagination.schema');
 
 // ISO 8601 ze strefą czasową ("Z" albo np. "+01:00"); wynik to obiekt Date.
 // Data bez strefy (np. "2026-11-10T10:00:00") jest odrzucana.
@@ -37,18 +38,6 @@ const SORT_VALUES = [
   '-participants',
 ];
 
-// page i limit przychodzą w query jako tekst: tylko cyfry, potem zakres liczbowy
-const pageNumber = z
-  .string()
-  .regex(/^\d+$/, 'must be an integer')
-  .transform(Number)
-  .pipe(z.number().min(1, 'must be at least 1'));
-
-const limitNumber = z
-  .string()
-  .regex(/^\d+$/, 'must be an integer')
-  .transform(Number)
-  .pipe(z.number().min(1, 'must be between 1 and 100').max(100, 'must be between 1 and 100'));
 
 // Wszystkie parametry są opcjonalne; brakujące dostają wartości domyślne
 // (page = 1, limit = 20, sort = startTime). from i to to przedział [from, to): zwracamy rezerwacje,

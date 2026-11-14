@@ -4,6 +4,7 @@ const { createRoomsKnexRepository } = require('../modules/rooms/rooms.repository
 const {
   createReservationsKnexRepository,
 } = require('../modules/reservations/reservations.repository.knex');
+const { createAuditLogKnexRepository } = require('../modules/audit-log/audit-log.repository.knex');
 
 // Komplet repositories PostgreSQL (Knex) razem z runInTransaction. Używa go server.js (STORAGE=knex)
 // i testy integracyjne (z połączeniem do bazy testowej).
@@ -13,6 +14,7 @@ function createKnexRepositories(knex) {
     buildingsRepository: createBuildingsKnexRepository(knex),
     roomsRepository: createRoomsKnexRepository(knex),
     reservationsRepository: createReservationsKnexRepository(knex),
+    auditLogRepository: createAuditLogKnexRepository(knex),
     // Prawdziwa transakcja bazy: repositories przekazane do `work` używają tego samego połączenia
     // (trx). Commit po zakończeniu `work`, rollback po rzuceniu błędu.
     runInTransaction: (work) =>

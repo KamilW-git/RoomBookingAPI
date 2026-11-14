@@ -70,7 +70,13 @@ async function executeAndCapture(page, { method, path: apiPath, body, params = {
     if (await input.count()) await input.first().fill('');
   }
   for (const [name, value] of Object.entries(params)) {
-    await block.locator(`tr[data-param-name="${name}"] input`).fill(String(value));
+    // Parametr z enum Swagger pokazuje jako listę rozwijaną, pozostałe jako pole tekstowe
+    const row = block.locator(`tr[data-param-name="${name}"]`);
+    if (await row.locator('select').count()) {
+      await row.locator('select').first().selectOption(String(value));
+    } else {
+      await row.locator('input').first().fill(String(value));
+    }
   }
   // Na zrzucie zostawiamy tylko parametry użyte w żądaniu (reszta to długa, pusta tabela), a treść odpowiedzi
   // rozwijamy w całości (Swagger domyślnie ucina ją do przewijanego pola 400 px)

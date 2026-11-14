@@ -6,7 +6,9 @@ const {
   RoomAlreadyBookedError,
 } = require('../../errors/http-errors');
 const { STATUS, canTransition } = require('./reservation-status');
+const { RESERVATION_EVENTS } = require('./reservation-events');
 const { ROLE } = require('../users/roles');
+const { noopEventBus } = require('../../shared/event-bus');
 
 const isAdmin = (user) => user.role === ROLE.ADMIN;
 
@@ -70,11 +72,15 @@ function overlaps(a, b) {
 // runInTransaction(work) wykonuje `work` w jednej transakcji i przekazuje mu repositories związane
 // z tą transakcją: work({ roomsRepository, reservationsRepository }). Commit następuje po zakończeniu
 // `work`, a rollback po rzuceniu błędu. Service nie wie, czy to transakcja bazy, czy blokada in-memory.
+//
+// eventBus.publish(type, payload) jest wołany dopiero PO udanej operacji (po commicie transakcji),
+// więc nieudana operacja (np. 409) ani idempotentne ponowne anulowanie nie publikują eventu.
 function createReservationsService({
   reservationsRepository,
   roomsRepository,
   runInTransaction,
   now = () => new Date(),
+  eventBus = noopEventBus,
 }) {
   // Rezerwacja dostępna dla użytkownika: jego własna albo dowolna dla ADMINa. Cudza rezerwacja kończy się
   // dokładnie tym samym błędem 404 co nieistniejąca, więc rezerwacje są prywatne: nie zdradzamy, że istnieją.
@@ -99,7 +105,7 @@ function createReservationsService({
 
       // Sprawdzenie kolizji i zapis to jedna niepodzielna operacja: wzorzec check-then-act bez
       // blokady zawodzi przy równoległych żądaniach (oba widzą wolny termin i oba zapisują).
-      return runInTransaction(async (tx) => {
+      const reservation = await runInTransaction(async (tx) => {
         // Blokada wiersza SALI (SELECT ... FOR UPDATE). Blokujemy właśnie salę, bo:
         // - nie da się zablokować wiersza, który jeszcze nie istnieje (konfliktującej rezerwacji
         //   nie ma - to dokładnie sytuacja wyścigu), a sala istnieje zawsze (inaczej 404),
@@ -141,6 +147,16 @@ function createReservationsService({
         // Odpowiedź ma ten sam kształt co GET: rezerwacja z osadzoną salą i budynkiem
         return tx.reservationsRepository.findByIdWithRoom(created.id);
       });
+
+      // Transakcja jest już zatwierdzona: rezerwacja na pewno istnieje w bazie
+      eventBus.publish(RESERVATION_EVENTS.CREATED, {
+        reservationId: reservation.id,
+        roomId: reservation.roomId,
+        userId: reservation.userId,
+        startTime: reservation.startTime.toISOString(),
+        endTime: reservation.endTime.toISOString(),
+      });
+      return reservation;
     },
 
     // Lista rezerwacji (z salą i budynkiem) z filtrami, sortowaniem i paginacją - wszystko po stronie bazy.
@@ -208,9 +224,22 @@ function createReservationsService({
         );
       }
 
-      await reservationsRepository.update(id, {
-        status: STATUS.CANCELLED,
-        cancelledAt: currentTime,
+      // Warunkowy UPDATE (tylko jeśli nadal CONFIRMED): przy dwóch równoległych anulowaniach zmienia
+      // rezerwację tylko jedno żądanie i tylko ono publikuje event; drugie dostaje ją bez zmian.
+      const updated = await reservationsRepository.update(
+        id,
+        { status: STATUS.CANCELLED, cancelledAt: currentTime },
+        { whereStatus: STATUS.CONFIRMED },
+      );
+      if (!updated) {
+        return reservationsRepository.findByIdWithRoom(id);
+      }
+
+      eventBus.publish(RESERVATION_EVENTS.CANCELLED, {
+        reservationId: reservation.id,
+        roomId: reservation.roomId,
+        userId: reservation.userId,
+        cancelledBy: currentUser.id,
       });
       return reservationsRepository.findByIdWithRoom(id);
     },

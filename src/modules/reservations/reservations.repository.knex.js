@@ -146,9 +146,14 @@ function createReservationsKnexRepository(knex) {
       return toReservation(row);
     },
 
-    // Zwraca zaktualizowaną rezerwację albo null, gdy nie istnieje
-    async update(id, changes) {
-      const [row] = await knex(TABLE).where({ id }).update(toRow(changes)).returning('*');
+    // Zwraca zaktualizowaną rezerwację albo null, gdy nie istnieje.
+    // whereStatus (opcjonalnie): aktualizuj tylko, jeśli rezerwacja nadal ma ten status - sprawdzenie
+    // i zmiana są jednym zapytaniem (UPDATE ... WHERE status = ?), więc dwa równoległe żądania nie zmienią
+    // tej samej rezerwacji dwa razy.
+    async update(id, changes, { whereStatus } = {}) {
+      const query = knex(TABLE).where({ id });
+      if (whereStatus !== undefined) query.where({ status: whereStatus });
+      const [row] = await query.update(toRow(changes)).returning('*');
       return row ? toReservation(row) : null;
     },
   };

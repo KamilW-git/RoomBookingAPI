@@ -27,19 +27,36 @@ const { createReservationsService } = require('./modules/reservations/reservatio
 const { createReservationsController } = require('./modules/reservations/reservations.controller');
 const { createReservationsRouter } = require('./modules/reservations/reservations.routes');
 
+const { createAuditLogService } = require('./modules/audit-log/audit-log.service');
+const { createAuditLogController } = require('./modules/audit-log/audit-log.controller');
+const { createAuditLogRouter } = require('./modules/audit-log/audit-log.routes');
+const { registerAuditLogListener } = require('./modules/audit-log/audit-log.listener');
+const { registerNotificationListener } = require('./modules/notifications/notification.listener');
+
+const { createEventBus } = require('./shared/event-bus');
+const { logger } = require('./shared/logger');
+
 // Buduje aplikację (składa warstwy), ale jej nie uruchamia - app.listen() woła tylko server.js.
-// Konkretne repositories przychodzą z zewnątrz.
+// Konkretne repositories przychodzą z zewnątrz. eventBus (opcjonalnie) można podać z zewnątrz, np. w testach;
+// domyślnie aplikacja tworzy własny. Jest dostępny jako app.locals.eventBus (drain() przy zamykaniu).
 function createApp({
   usersRepository,
   buildingsRepository,
   roomsRepository,
   reservationsRepository,
+  auditLogRepository,
   passwordHasher,
   tokenService,
   runInTransaction,
   now,
+  eventBus = createEventBus({ logger }),
 }) {
   const app = express();
+  app.locals.eventBus = eventBus;
+
+  // Listenery eventów domenowych: zapis do audit_log i symulacja powiadomień
+  registerAuditLogListener({ eventBus, auditLogRepository });
+  registerNotificationListener({ eventBus, usersRepository });
   app.use(requestLogger); // pierwszy: requestId i log obejmują też 404 oraz błąd parsowania JSON
   app.use(express.json());
 
@@ -61,7 +78,9 @@ function createApp({
     roomsRepository,
     runInTransaction,
     now,
+    eventBus,
   });
+  const auditLogService = createAuditLogService({ auditLogRepository });
 
   // Publiczne: tylko /api/auth/register i /api/auth/login (oraz dokumentacja /api/docs powyżej).
   // /api/auth/me ma authenticate nałożony w samym routerze auth.
@@ -92,6 +111,14 @@ function createApp({
     '/api/reservations',
     authenticate,
     createReservationsRouter(createReservationsController({ reservationsService })),
+  );
+
+  // Panel administratora: wszystkie endpointy pod /api/admin tylko dla roli ADMIN (USER dostaje 403)
+  app.use(
+    '/api/admin',
+    authenticate,
+    authorize(ROLE.ADMIN),
+    createAuditLogRouter(createAuditLogController({ auditLogService })),
   );
 
   // TYMCZASOWE: pokazuje obsługę nieoczekiwanego błędu (500). Usuń po sprawozdaniu.

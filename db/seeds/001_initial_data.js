@@ -26,7 +26,8 @@ exports.seed = async (knex) => {
   const userHash = await bcrypt.hash(seedUserPassword, config.bcryptCost);
 
   await knex.transaction(async (trx) => {
-    await trx.raw('TRUNCATE reservations, rooms, buildings, users RESTART IDENTITY CASCADE');
+    // audit_log też: po resecie danych nie powinien opisywać rezerwacji, których już nie ma
+    await trx.raw('TRUNCATE audit_log, reservations, rooms, buildings, users RESTART IDENTITY CASCADE');
 
     await trx('users').insert(
       data.users.map((u) => ({

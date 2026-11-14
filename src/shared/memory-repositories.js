@@ -6,6 +6,7 @@ const {
   createReservationsMemoryRepository,
 } = require('../modules/reservations/reservations.repository.memory');
 const { createUsersMemoryRepository } = require('../modules/users/users.repository.memory');
+const { createAuditLogMemoryRepository } = require('../modules/audit-log/audit-log.repository.memory');
 
 // Komplet repositories in-memory razem z runInTransaction. Używa go server.js (STORAGE=memory) i unit testy,
 // więc testy sprawdzają dokładnie ten sam kod co tryb in-memory aplikacji.
@@ -30,6 +31,7 @@ function createMemoryRepositories({ users = [], buildings, rooms, reservations }
     getUsersRepository: () => repositories.usersRepository,
     seedReservations: reservations,
   });
+  repositories.auditLogRepository = createAuditLogMemoryRepository();
 
   // "Transakcja" in-memory to kolejka: w danej chwili działa tylko jedna, więc sprawdzenie kolizji
   // i zapis nie mogą się przeplatać (wzajemne wykluczanie zamiast blokad wierszy bazy).

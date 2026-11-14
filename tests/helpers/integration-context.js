@@ -14,6 +14,8 @@ const { createApp } = require('../../src/app');
 const { createKnexRepositories } = require('../../src/shared/knex-repositories');
 const { createPasswordHasher } = require('../../src/modules/auth/password-hasher');
 const { createTokenService } = require('../../src/modules/auth/token-service');
+const { createEventBus } = require('../../src/shared/event-bus');
+const { logger } = require('../../src/shared/logger');
 
 // Losowe hasło kont testowych (nie ma go w repozytorium); znają je tylko testy w tym uruchomieniu
 const PASSWORD = crypto.randomBytes(12).toString('hex');
@@ -34,17 +36,31 @@ function setupIntegrationTests() {
 
     const passwordHasher = createPasswordHasher({ cost: config.bcryptCost });
     passwordHash = await passwordHasher.hash(PASSWORD);
-    const app = createApp({
-      ...createKnexRepositories(ctx.knex),
-      passwordHasher,
-      tokenService: createTokenService(config.jwt),
-    });
-    ctx.request = () => request(app);
+
+    // Aplikacja na bazie testowej; overrides podmieniają wybrane zależności (np. repository audit logu).
+    // Zwraca { request, eventBus } - eventBus.drain() czeka na zakończenie listenerów.
+    ctx.buildApp = (overrides = {}) => {
+      const eventBus = createEventBus({ logger });
+      const app = createApp({
+        ...createKnexRepositories(ctx.knex),
+        passwordHasher,
+        tokenService: createTokenService(config.jwt),
+        eventBus,
+        ...overrides,
+      });
+      return { request: () => request(app), eventBus };
+    };
+
+    const { request: defaultRequest, eventBus } = ctx.buildApp();
+    ctx.request = defaultRequest;
+    ctx.eventBus = eventBus;
   });
 
   beforeEach(async () => {
     const { knex } = ctx;
-    await knex.raw('TRUNCATE reservations, rooms, buildings, users RESTART IDENTITY CASCADE');
+    await knex.raw(
+      'TRUNCATE audit_log, reservations, rooms, buildings, users RESTART IDENTITY CASCADE',
+    );
 
     for (const [key, user] of Object.entries(USERS)) {
       const [row] = await knex('users')

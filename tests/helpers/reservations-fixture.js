@@ -34,8 +34,9 @@ function reservation(overrides = {}) {
   };
 }
 
-// reservations: dane startowe (domyślnie brak). Zwraca service, repositories i zegar do przestawiania.
-function setup({ reservations = [] } = {}) {
+// reservations: dane startowe (domyślnie brak); eventBus: np. { publish: jest.fn() } (domyślnie bez eventów).
+// Zwraca service, repositories i zegar do przestawiania.
+function setup({ reservations = [], eventBus } = {}) {
   let currentTime = NOW;
   const clock = {
     now: () => new Date(currentTime.getTime()),
@@ -56,7 +57,7 @@ function setup({ reservations = [] } = {}) {
     reservations,
   });
 
-  const service = createReservationsService({ ...repositories, now: clock.now });
+  const service = createReservationsService({ ...repositories, now: clock.now, eventBus });
   return { service, repositories, clock };
 }
 

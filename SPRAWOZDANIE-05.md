@@ -288,3 +288,133 @@ tworzy konto ADMIN (logowanie 200, `GET /api/reservations` jako ADMIN zwraca 5 r
 | Rys. 3.2 | `docker compose logs api` (na świeżym klonie) | migracje przy starcie: `Batch 1 run: 6 migrations` |
 | Rys. 3.3 | `docker compose stop api` + `docker compose logs api --tail 4` | graceful shutdown: SIGTERM, zamknięcie serwera i puli |
 | Rys. 3.4 | `screenshots/zadanie05/zad3_rys3.4_swagger_z_kontenera.png` | Swagger UI serwowany przez kontener `api` |
+
+## Zadanie 4 - Eventy i audit log
+
+### Event bus z izolacją błędów listenerów
+
+```js
+// src/shared/event-bus.js
+function createEventBus({ logger }) {
+  const emitter = new EventEmitter();
+  const pending = new Set();
+  return {
+    publish(type, payload) {
+      const event = Object.freeze({ type, payload, occurredAt: new Date() });
+      emitter.emit(type, event);                       // nie rzuca i nie czeka na listenery
+      return event;
+    },
+    subscribe(type, name, handler) {
+      emitter.on(type, (event) => {
+        const run = Promise.resolve()
+          .then(() => handler(event))                  // listener działa po bieżącym kodzie (po odpowiedzi API)
+          .catch((error) => logger.error('event listener failed', { listener: name, eventType: event.type, error: error.message }))
+          .finally(() => pending.delete(run));
+        pending.add(run);
+      });
+    },
+    async drain() { while (pending.size > 0) await Promise.all([...pending]); },   // testy, graceful shutdown
+  };
+}
+```
+
+Każdy listener działa we własnym `Promise` z `catch`: wyjątek synchroniczny i odrzucony `Promise` trafiają do logów,
+nie docierają do `publish()` i nie zatrzymują pozostałych listenerów. Przy zamykaniu serwera `drain()` dokańcza zapisy
+listenerów przed zamknięciem puli połączeń.
+
+### Publikacja eventów w service'ie (po zatwierdzeniu transakcji)
+
+```js
+// reservations.service.js - create
+const reservation = await runInTransaction(async (tx) => { /* blokada sali, reguły, zapis */ });
+// transakcja jest już zatwierdzona - błąd (np. 409) rzucony wyżej nie dochodzi do publish
+eventBus.publish(RESERVATION_EVENTS.CREATED, {
+  reservationId: reservation.id, roomId: reservation.roomId, userId: reservation.userId,
+  startTime: reservation.startTime.toISOString(), endTime: reservation.endTime.toISOString(),
+});
+
+// reservations.service.js - cancel
+if (reservation.status === STATUS.CANCELLED) return reservation;          // idempotentnie: bez eventu
+const updated = await reservationsRepository.update(id, { status: STATUS.CANCELLED, cancelledAt: currentTime },
+  { whereStatus: STATUS.CONFIRMED });                                      // UPDATE ... WHERE status = 'CONFIRMED'
+if (!updated) return reservationsRepository.findByIdWithRoom(id);         // ktoś anulował równolegle: bez eventu
+eventBus.publish(RESERVATION_EVENTS.CANCELLED, {
+  reservationId: reservation.id, roomId: reservation.roomId, userId: reservation.userId, cancelledBy: currentUser.id,
+});
+```
+
+Warunkowy `UPDATE` sprawia, że nawet dwa równoległe anulowania tej samej rezerwacji publikują dokładnie jeden event.
+
+### Listenery, migracja i endpoint
+
+- **Migracja** `20261114100001_create_audit_log.js`: `id bigserial`, `event_type`, `payload jsonb`, `occurred_at`,
+  `recorded_at`, indeksy pod sortowanie od najnowszych i filtr po typie.
+- **Listener audit logu** (`audit-log.listener.js`) zapisuje każdy event `reservation.*` jako jeden wiersz (payload bez zmian).
+- **Listener powiadomień** (`notification.listener.js`): przy `reservation.cancelled`, gdy anulował ADMIN cudzą rezerwację,
+  wypisuje `[notification] to: <email właściciela> - Twoja rezerwacja #id (sala ...) zostala anulowana przez administratora.`
+  Anulowanie własnej rezerwacji nie wysyła powiadomienia.
+- **`GET /api/admin/audit-log`** (prefiks `/api/admin`: `authenticate` + `authorize(ADMIN)`, USER dostaje 403): pagination
+  (`page`, `limit`, `meta`), filtr `?eventType=` (tylko znane typy, inny -> 400), sortowanie `occurred_at DESC, id DESC`.
+  Endpoint jest opisany w `openapi.yaml` (tag Admin), `npm run docs:check` przechodzi.
+
+### Testy
+
+- `tests/unit/reservations.events.test.js` (`eventBus.publish = jest.fn()`): event po udanym utworzeniu (pełny payload),
+  publikacja dopiero po zapisie, **brak eventu** po 409 (kolizja, pojemność), 400 i 404; event anulowania z `cancelledBy`,
+  brak drugiego eventu przy idempotentnym ponownym anulowaniu, brak eventu po 409 (rozpoczęta) i 404 (obcy USER).
+- `tests/unit/event-bus.test.js`: izolacja błędów (wyjątek synchroniczny i odrzucony `Promise`), `publish()` nie czeka na listenery.
+- `tests/integration/audit-log.test.js` (prawdziwa baza testowa): scenariusz z zadania -> 2 wpisy w `audit_log` (kolumna
+  `jsonb`), endpoint (kolejność, pagination, filtr, 403, 400), powiadomienie tylko przy anulowaniu przez ADMINa, a przy
+  listenerze rzucającym wyjątek `POST /api/reservations` zwraca 201 i błąd jest w logach.
+- `npm test`: **5 suites, 57/57**. Kontrola mutacji z zadania 1 nadal wykrywa błąd w regule nakładania.
+
+```js
+test.each([
+  ['kolizja terminu (409 ROOM_ALREADY_BOOKED)', input('10:30', '11:30'), 'ROOM_ALREADY_BOOKED'],
+  ['przekroczona pojemność (409 CONFLICT)', input('12:00', '13:00', { participants: 11 }), 'CONFLICT'],
+  ['za krótka rezerwacja (400 VALIDATION_ERROR)', input('12:00', '12:10'), 'VALIDATION_ERROR'],
+  ['nieistniejąca sala (404 NOT_FOUND)', input('12:00', '13:00', { roomId: 999 }), 'NOT_FOUND'],
+])('brak eventu po błędzie: %s', async (_name, data, code) => {
+  const eventBus = { publish: jest.fn() };
+  const { service } = setup({ reservations: [reservation()], eventBus });
+
+  await expect(service.create(OTHER_USER, data)).rejects.toMatchObject({ code });
+  expect(eventBus.publish).not.toHaveBeenCalled();
+});
+```
+
+### Scenariusz (`npm run demo:audit-log` na API z `docker compose up`)
+
+```
+1. Jan tworzy rezerwację             HTTP 201  id=6
+2. Anna: nakładający się termin      HTTP 409  ROOM_ALREADY_BOOKED
+3. ADMIN anuluje rezerwację Jana     HTTP 200  CANCELLED
+4. ADMIN anuluje ponownie            HTTP 200  CANCELLED (bez zmian)
+
+ id | event_type            | payload
+  1 | reservation.created   | {"roomId":1,"userId":3,"endTime":"2027-01-20T12:00:00.000Z","startTime":"2027-01-20T10:00:00.000Z","reservationId":6}
+  2 | reservation.cancelled | {"roomId":1,"userId":3,"cancelledBy":1,"reservationId":6}
+```
+
+Nieudana kolizja (409) i ponowne anulowanie nie dodały wpisów. W logach kontenera (`docker compose logs api`):
+`[notification] to: jan.kowalski@seed.example.com - Twoja rezerwacja #6 (sala 1) zostala anulowana przez administratora.`
+
+### Izolacja błędów (`npm run demo:listener-failure`)
+
+Skrypt **tymczasowo** podstawia repository audit logu, którego zapis zawsze rzuca wyjątek (kod aplikacji bez zmian):
+
+```
+{"level":"error","message":"event listener failed","listener":"audit-log","eventType":"reservation.created","error":"audit_log: zapis nieudany (celowy blad do demonstracji)"}
+{"level":"info","message":"request completed","method":"POST","url":"/api/reservations","status":201,...}
+[demo] odpowiedz dla klienta: HTTP 201, rezerwacja id=6, status=CONFIRMED
+```
+
+### Zrzuty
+
+| Rysunek | Plik / polecenie | Co pokazuje |
+| --- | --- | --- |
+| Rys. 4.1 | `zad4_rys4.1_tabela_audit_log.png` | zawartość `audit_log` po scenariuszu (strona z rzeczywistych wierszy bazy) |
+| Rys. 4.2 | `zad4_rys4.2_swagger_audit_log.png` | `GET /api/admin/audit-log` jako ADMIN: 2 wpisy od najnowszych |
+| Rys. 4.3 | `zad4_rys4.3_swagger_audit_log_filtr.png` | filtr `?eventType=reservation.cancelled` |
+| Rys. 4.4 | terminal: `npm run demo:listener-failure` | listener rzuca wyjątek, a klient dostaje 201 |
+| Rys. 4.5 | terminal: `docker compose logs api` | komunikat `[notification] to: ...` |

@@ -77,6 +77,7 @@ async function main() {
     server.close(async (err) => {
       logger.info('http server closed');
       try {
+        await app.locals.eventBus.drain(); // dokończenie zapisów listenerów (audit log) przed zamknięciem puli
         await close();
         logger.info('database pool closed');
       } catch (closeError) {

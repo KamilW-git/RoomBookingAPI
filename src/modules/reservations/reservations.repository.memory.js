@@ -107,10 +107,12 @@ function createReservationsMemoryRepository({
       return copy(reservation);
     },
 
-    // Zwraca zaktualizowaną rezerwację albo null, gdy nie istnieje
-    async update(id, changes) {
+    // Zwraca zaktualizowaną rezerwację albo null, gdy nie istnieje albo (przy whereStatus) ma inny status.
+    // Sprawdzenie i zmiana są jednym synchronicznym blokiem, tak jak UPDATE ... WHERE w bazie.
+    async update(id, changes, { whereStatus } = {}) {
       const reservation = reservations.find((r) => r.id === id);
       if (!reservation) return null;
+      if (whereStatus !== undefined && reservation.status !== whereStatus) return null;
       Object.assign(reservation, changes);
       return copy(reservation);
     },
