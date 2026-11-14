@@ -1,23 +1,46 @@
-# PostgreSQL dla Room Booking API.
-# Wartości pochodzą z pliku .env (Docker Compose czyta go automatycznie z tego katalogu).
+# Room Booking API: API + PostgreSQL. Uruchomienie od zera: cp .env.example .env && docker compose up --build
+# Żadnych sekretów w tym pliku - wszystkie wartości pochodzą z .env (wzór w .env.example),
+# który Docker Compose czyta automatycznie z tego katalogu.
 services:
   db:
-    image: postgres:16 # konkretna wersja obrazu
-    container_name: roombooking-db
+    image: postgres:16.15 # konkretna wersja obrazu
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?ustaw POSTGRES_USER w .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ustaw POSTGRES_PASSWORD w .env}
+      POSTGRES_DB: ${POSTGRES_DB:?ustaw POSTGRES_DB w .env}
     ports:
-      - '${DB_PORT}:5432'
+      # dostęp z komputera (npm start, testy integracyjne, psql); API w kontenerze łączy się przez sieć Compose
+      - '${DB_PORT:-5433}:5432'
     volumes:
-      - roombooking_pgdata:/var/lib/postgresql/data # nazwany volume: dane przetrwają restart kontenera
+      - roombooking_pgdata:/var/lib/postgresql/data # named volume: dane przetrwają usunięcie kontenera
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
       interval: 3s
       timeout: 3s
       retries: 20
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy # API startuje dopiero, gdy baza przyjmuje połączenia
+    environment:
+      # Lokalnie development (wartości-wzory z .env.example dozwolone z ostrzeżeniem); w produkcji: production
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3000
+      STORAGE: knex
+      # W sieci Compose baza jest pod nazwą usługi "db" i portem 5432 (nie localhost:DB_PORT z .env)
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET:?ustaw JWT_SECRET w .env}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      BCRYPT_COST: ${BCRYPT_COST:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_USER_PASSWORD: ${SEED_USER_PASSWORD:-}
+      LOG_LEVEL: ${LOG_LEVEL:-}
+    ports:
+      - '${API_PORT:-3000}:3000'
 
 volumes:
   roombooking_pgdata:

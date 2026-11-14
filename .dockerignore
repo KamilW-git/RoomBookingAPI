@@ -1,0 +1,26 @@
+# Zależności instaluje `npm ci` w obrazie
+node_modules
+
+# Sekrety i lokalna konfiguracja nigdy nie trafiają do obrazu (wartości przychodzą z docker-compose / .env)
+.env
+.env.*
+
+# Repozytorium i narzędzia
+.git
+.github
+.gitignore
+.vscode
+.claude
+
+# Rzeczy niepotrzebne do działania API
+tests
+scripts
+screenshots
+coverage
+*.log
+*.md
+*.http
+jest.config.js
+Dockerfile
+.dockerignore
+docker-compose.yml

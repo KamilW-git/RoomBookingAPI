@@ -58,11 +58,36 @@ async function main() {
     console.log(`Serwer działa na http://localhost:${config.port} (STORAGE=${storage})`);
   });
 
-  const shutdown = () => {
-    server.close(() => close().finally(() => process.exit(0)));
+  // Graceful shutdown (SIGTERM wysyła m.in. `docker compose down`, SIGINT to Ctrl+C):
+  // 1. server.close() - koniec przyjmowania nowych połączeń, trwające żądania kończą się normalnie,
+  // 2. zamknięcie bezczynnych połączeń keep-alive (inaczej close() czekałby na ich timeout),
+  // 3. zamknięcie puli połączeń z bazą, potem wyjście z kodem 0.
+  // Bezpiecznik: jeśli coś się zawiesi, kończymy po 8 s - przed SIGKILL Dockera po 10 s.
+  let shuttingDown = false;
+  const shutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info('shutdown started', { signal });
+
+    setTimeout(() => {
+      logger.error('shutdown timed out, forcing exit');
+      process.exit(1);
+    }, 8000).unref();
+
+    server.close(async (err) => {
+      logger.info('http server closed');
+      try {
+        await close();
+        logger.info('database pool closed');
+      } catch (closeError) {
+        logger.error('database pool close failed', { error: closeError.message });
+      }
+      process.exit(err ? 1 : 0);
+    });
+    server.closeIdleConnections();
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 main().catch((err) => {

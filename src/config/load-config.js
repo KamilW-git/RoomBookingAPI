@@ -8,8 +8,10 @@ class ConfigError extends Error {
   }
 }
 
-// Wartości-wzory z .env.example (zaczynają się od "change_me") nie mogą trafić do działającej aplikacji
-const notPlaceholder = (value) => !value.startsWith('change_me');
+// Wartości-wzory z .env.example zaczynają się od "change_me". W produkcji aplikacja ich nie przyjmuje;
+// lokalnie (development/test) startuje z ostrzeżeniem, żeby `cp .env.example .env` wystarczyło do uruchomienia.
+const isPlaceholder = (value) => typeof value === 'string' && value.startsWith('change_me');
+const PLACEHOLDER_FIELDS = ['JWT_SECRET', 'SEED_ADMIN_PASSWORD', 'SEED_USER_PASSWORD'];
 
 const postgresUrl = z
   .string()
@@ -44,8 +46,7 @@ const envSchema = z
     // Sekret do podpisywania tokenów JWT (HS256): krótki sekret da się odgadnąć lub złamać brute-force
     JWT_SECRET: z
       .string({ required_error: 'jest wymagany' })
-      .min(32, 'musi miec co najmniej 32 znaki')
-      .refine(notPlaceholder, 'zmien wartosc z .env.example na wlasny, losowy sekret'),
+      .min(32, 'musi miec co najmniej 32 znaki'),
     // Czas życia tokenu: liczba + jednostka (s, m, h, d), np. 15m, 10s, 1h
     JWT_EXPIRES_IN: z
       .string()
@@ -65,7 +66,6 @@ const envSchema = z
       .string()
       .min(10, 'musi miec co najmniej 10 znakow')
       .max(72, 'moze miec co najwyzej 72 znaki')
-      .refine(notPlaceholder, 'zmien wartosc z .env.example na wlasne haslo')
       .optional(),
 
     // Hasło kont demonstracyjnych (rola USER) tworzonych w seedzie jako właściciele przykładowych rezerwacji
@@ -73,13 +73,23 @@ const envSchema = z
       .string()
       .min(10, 'musi miec co najmniej 10 znakow')
       .max(72, 'moze miec co najwyzej 72 znaki')
-      .refine(notPlaceholder, 'zmien wartosc z .env.example na wlasne haslo')
       .optional(),
 
     // Adres API używany przez skrypty pomocnicze (domyślnie http://localhost:<PORT>)
     BASE_URL: z.string().url('musi byc poprawnym adresem URL').optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.NODE_ENV === 'production') {
+      for (const field of PLACEHOLDER_FIELDS) {
+        if (isPlaceholder(env[field])) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [field],
+            message: 'w produkcji zmien wartosc z .env.example na wlasna, losowa',
+          });
+        }
+      }
+    }
     if (env.NODE_ENV === 'test') {
       // Testy integracyjne czyszczą tabele przed każdym testem, więc nie mogą trafić w bazę deweloperską
       if (!env.TEST_DATABASE_URL) {
@@ -147,6 +157,8 @@ function loadConfig(env) {
     seedAdminPassword: data.SEED_ADMIN_PASSWORD,
     seedUserPassword: data.SEED_USER_PASSWORD,
     jwt: Object.freeze({ secret: data.JWT_SECRET, expiresIn: data.JWT_EXPIRES_IN }),
+    // Zmienne z wartościami-wzorami z .env.example (dozwolone tylko poza produkcją); wypisuje je src/config
+    placeholderWarnings: Object.freeze(PLACEHOLDER_FIELDS.filter((field) => isPlaceholder(data[field]))),
   });
 }
 

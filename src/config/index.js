@@ -15,4 +15,11 @@ try {
   throw err;
 }
 
+if (config.placeholderWarnings.length > 0) {
+  console.warn(
+    `[config] UWAGA: ${config.placeholderWarnings.join(', ')} ma wartosc z .env.example. ` +
+      'Tylko do lokalnego uruchomienia - w produkcji (NODE_ENV=production) aplikacja nie wystartuje.',
+  );
+}
+
 module.exports = config;
