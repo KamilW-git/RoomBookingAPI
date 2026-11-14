@@ -5,6 +5,9 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "test": "jest",
+    "test:unit": "jest --selectProjects unit",
+    "test:mutation-overlap": "node scripts/mutation-overlap.js",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "db:psql": "docker compose exec db psql -U roombooking -d roombooking",
@@ -35,6 +38,7 @@
     "zod": "3.24.1"
   },
   "devDependencies": {
+    "jest": "30.5.2",
     "playwright-core": "1.49.1"
   }
 }

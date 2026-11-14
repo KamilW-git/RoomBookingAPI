@@ -4,8 +4,9 @@ const { buildings: SEED_BUILDINGS } = require('../../../db/seed-data');
 // Implementacja in-memory: jedyne miejsce z tablicą budynków. Interfejs jest taki sam jak w
 // buildings.repository.knex.js. roomsCount emulujemy na podstawie repository sal (przekazanego jako
 // funkcja, bo repositories in-memory zależą od siebie nawzajem - patrz server.js).
-function createBuildingsMemoryRepository({ getRoomsRepository } = {}) {
-  const buildings = SEED_BUILDINGS.map((building) => ({ ...building }));
+// seedBuildings (opcjonalnie): własne dane startowe, np. w testach; domyślnie dane z db/seed-data.
+function createBuildingsMemoryRepository({ getRoomsRepository, seedBuildings = SEED_BUILDINGS } = {}) {
+  const buildings = seedBuildings.map((building) => ({ ...building }));
   let nextId = Math.max(0, ...buildings.map((b) => b.id)) + 1;
 
   async function withRoomsCount(items) {

@@ -4,8 +4,9 @@ const { rooms: SEED_ROOMS } = require('../../../db/seed-data');
 // Implementacja in-memory: jedyne miejsce z tablicą sal. Interfejs jest taki sam jak w
 // rooms.repository.knex.js. Metody *WithBuilding emulują JOIN: budynki bierzemy z repository budynków
 // (przekazanego jako funkcja, bo repositories in-memory zależą od siebie nawzajem - patrz server.js).
-function createRoomsMemoryRepository({ getBuildingsRepository } = {}) {
-  const rooms = SEED_ROOMS.map((room) => ({ ...room }));
+// seedRooms (opcjonalnie): własne dane startowe, np. w testach; domyślnie dane z db/seed-data.
+function createRoomsMemoryRepository({ getBuildingsRepository, seedRooms = SEED_ROOMS } = {}) {
+  const rooms = seedRooms.map((room) => ({ ...room }));
   let nextId = Math.max(0, ...rooms.map((r) => r.id)) + 1;
 
   const copy = (room) => ({ ...room });

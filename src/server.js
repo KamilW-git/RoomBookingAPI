@@ -7,18 +7,10 @@ const { logger } = require('./shared/logger');
 const seedData = require('../db/seed-data');
 const { createPasswordHasher } = require('./modules/auth/password-hasher');
 const { createTokenService } = require('./modules/auth/token-service');
-const { createUsersMemoryRepository } = require('./modules/users/users.repository.memory');
+const { createMemoryRepositories } = require('./shared/memory-repositories');
 const { createUsersKnexRepository } = require('./modules/users/users.repository.knex');
-
-const {
-  createBuildingsMemoryRepository,
-} = require('./modules/buildings/buildings.repository.memory');
 const { createBuildingsKnexRepository } = require('./modules/buildings/buildings.repository.knex');
-const { createRoomsMemoryRepository } = require('./modules/rooms/rooms.repository.memory');
 const { createRoomsKnexRepository } = require('./modules/rooms/rooms.repository.knex');
-const {
-  createReservationsMemoryRepository,
-} = require('./modules/reservations/reservations.repository.memory');
 const {
   createReservationsKnexRepository,
 } = require('./modules/reservations/reservations.repository.knex');
@@ -38,36 +30,14 @@ async function createRepositories(storage, passwordHasher) {
     const adminHash = await passwordHasher.hash(seedAdminPassword);
     const userHash = await passwordHasher.hash(seedUserPassword);
 
-    // Repositories in-memory emulują JOIN-y, więc potrzebują siebie nawzajem: budynki liczą sale,
-    // sale osadzają budynek, rezerwacje osadzają salę. Zależność jest cykliczna, dlatego dostają
-    // funkcje zwracające repository (sięgają po nie dopiero przy wywołaniu metody).
-    const repositories = {};
-    repositories.usersRepository = createUsersMemoryRepository({
-      seedUsers: seedData.users.map((user) => ({
+    // Budynki, sale i rezerwacje startują z db/seed-data; konta dostają hashe haseł z konfiguracji
+    const repositories = createMemoryRepositories({
+      users: seedData.users.map((user) => ({
         ...user,
         passwordHash: user.role === 'ADMIN' ? adminHash : userHash,
         createdAt: new Date(),
       })),
     });
-    repositories.buildingsRepository = createBuildingsMemoryRepository({
-      getRoomsRepository: () => repositories.roomsRepository,
-    });
-    repositories.roomsRepository = createRoomsMemoryRepository({
-      getBuildingsRepository: () => repositories.buildingsRepository,
-    });
-    repositories.reservationsRepository = createReservationsMemoryRepository({
-      getRoomsRepository: () => repositories.roomsRepository,
-      getUsersRepository: () => repositories.usersRepository,
-    });
-
-    // "Transakcja" in-memory to kolejka: w danej chwili działa tylko jedna, więc sprawdzenie kolizji
-    // i zapis nie mogą się przeplatać (wzajemne wykluczanie zamiast blokad wierszy bazy).
-    let queue = Promise.resolve();
-    repositories.runInTransaction = (work) => {
-      const result = queue.then(() => work(repositories));
-      queue = result.catch(() => {}); // błąd jednej transakcji nie blokuje kolejnych
-      return result;
-    };
 
     return { repositories, close: async () => {} };
   }

@@ -15,9 +15,14 @@ const SORT_VALUES = {
 // patrz server.js).
 // Daty trzymamy jako obiekty Date (moment w czasie, niezależny od strefy);
 // na ISO 8601 UTC zamienia je dopiero mapper.
-function createReservationsMemoryRepository({ getRoomsRepository, getUsersRepository } = {}) {
-  // Dane startowe zawierają m.in. rezerwację, która już się rozpoczęła, i anulowaną
-  const reservations = SEED_RESERVATIONS.map((reservation) => ({ ...reservation }));
+// seedReservations (opcjonalnie): własne dane startowe, np. w testach; domyślnie dane z db/seed-data.
+function createReservationsMemoryRepository({
+  getRoomsRepository,
+  getUsersRepository,
+  seedReservations = SEED_RESERVATIONS,
+} = {}) {
+  // Dane startowe z seeda zawierają m.in. rezerwację, która już się rozpoczęła, i anulowaną
+  const reservations = seedReservations.map((reservation) => ({ ...reservation }));
   // Licznik startuje za największym ID z danych startowych
   let nextId = Math.max(0, ...reservations.map((r) => r.id)) + 1;
 
