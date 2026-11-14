@@ -63,7 +63,7 @@ function checkTimeRules(startTime, endTime, nowMs) {
 // Przedziały półotwarte [start, end): koniec jednej rezerwacji może być początkiem następnej.
 // A i B nakładają się wtedy i tylko wtedy, gdy A.start < B.end AND B.start < A.end.
 function overlaps(a, b) {
-  return a.startTime.getTime() <= b.endTime.getTime() && b.startTime.getTime() <= a.endTime.getTime();
+  return a.startTime.getTime() < b.endTime.getTime() && b.startTime.getTime() < a.endTime.getTime();
 }
 
 // Logika biznesowa rezerwacji. Repositories, funkcja `now` i `runInTransaction` przychodzą z zewnątrz
